@@ -1,0 +1,17 @@
+{
+  "name": "Brewskis Shift Lists",
+  "short_name": "Brewskis",
+  "description": "Shift checklists, inventory counts and order deadlines for JT Brewski's Pub.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e0b09",
+  "theme_color": "#0e0b09",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
