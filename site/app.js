@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 15;
+const APP_VERSION = 16;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -783,17 +783,31 @@ const doneName = t => t.done_by_name || staffName(t.done_by);
 const addedName = t => t.added_by_name || (t.added_by ? staffName(t.added_by) : "Someone");
 
 /* ---------- Shifts ---------- */
+/* which sides of the pub this person sees: managers see everything; everyone else sees the
+   side(s) their roles are on (front of house, back of house, or both). Management lists are managers only. */
+function visibleSections(){
+  const m = me(); if (!m) return new Set();
+  if (m.manager) return new Set(["mgmt","foh","boh"]);
+  const secs = new Set((m.roles||[]).map(id=>(roleById(id)||{}).section).filter(Boolean));
+  secs.delete("mgmt");
+  return secs;
+}
+const canSeeRole = r => !!r && visibleSections().has(r.section);
+
 function viewOverview(){
   const out = [], d = D(), admin = isAdmin();
   if (!d.roles.length) return [emptyCard("No roles set up yet", admin ? "Add roles on the Team tab. Each role gets its own checklist." : "A manager needs to set up the roles first.")];
-  const all = d.tasks.filter(t=>roleById(t.role_id) && countsToday(t));
+  const secs = visibleSections();
+  if (!secs.size) return [emptyCard("No role yet", "A manager needs to give you a role before your checklists show up here."), activitySection()];
+  const all = d.tasks.filter(t=>canSeeRole(roleById(t.role_id)) && countsToday(t));
   const p = progressOf(all);
   const myRoles = new Set(me().roles||[]);
+  const scope = admin || (secs.has("foh") && secs.has("boh")) ? "tasks done today, across every shift" : secs.has("foh") ? "front of house tasks done today" : "back of house tasks done today";
   out.push(h("section",{class:"summary", "aria-label":"Today's progress: "+p.done+" of "+p.total+" tasks done"},
     stein(p.pct),
     h("div",{class:"sumtext"},
       h("div",{class:"big"}, String(p.done), h("small",{text:" of "+p.total})),
-      h("div",{class:"sumlabel", text: p.total ? (p.done===p.total ? "Everything due today is done" : "tasks done today, across every shift") : "Nothing due today. Open a role to add tasks."}),
+      h("div",{class:"sumlabel", text: p.total ? (p.done===p.total ? "Everything due today is done" : scope) : "Nothing due today. Open a role to add tasks."}),
       p.total && p.done < p.total ? h("div",{class:"sumleft", text:(p.total-p.done)+" to go"}) : null)));
   if (admin && d.suppliers.length){
     const next = suppliersByDeadline().find(x=>x.d && !x.ordered);
@@ -805,6 +819,7 @@ function viewOverview(){
     }
   }
   for (const [sec, label, short] of SECTIONS){
+    if (!secs.has(sec)) continue;
     const roles = sortedRoles(sec); if (!roles.length) continue;
     out.push(h("section",{},
       h("div",{class:"sec-head"}, h("h2",{class:"sec-"+sec, text:label}), h("span",{class:"tag "+sec, text:short})),
@@ -824,7 +839,9 @@ function viewOverview(){
 function activitySection(){
   const admin = isAdmin();
   const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order"};
-  const ev = D().log.map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place||""}));
+  /* staff only see activity from their side of the pub, plus inventory counts */
+  const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); return place=>ok.has(place); })();
+  const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place||""}));
   let shown = ev;
   const q = admin ? S.actQuery.trim().toLowerCase() : "";
   if (admin && S.actRange!=="all"){ const cut = S.actRange==="today" ? shiftStartISO() : new Date(Date.now()-7*86400e3).toISOString(); shown = shown.filter(e=>new Date(e.at).toISOString()>=cut); }
@@ -916,7 +933,7 @@ function taskRow(t, role){
 
 function viewRole(){
   const role = roleById(S.roleId);
-  if (!role){ S.view="overview"; return viewOverview(); }
+  if (!role || !canSeeRole(role)){ S.view="overview"; return viewOverview(); }
   const people = roleStaff(role.id);
   const allTasks = roleTasks(role.id);
   let tasks = allTasks;

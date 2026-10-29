@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 16,
   "date": "2026-10-29",
-  "notes": "App name shows as JT Brewski's instead of Shift Lists."
+  "notes": "Front of house staff see front of house lists, back of house see back of house; managers see everything."
 }
