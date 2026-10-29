@@ -279,3 +279,13 @@ h2.sec-foh{color:var(--foh)} h2.sec-boh{color:var(--boh)} h2.sec-mgmt{color:var(
 .pindots span{border-color:var(--blue)}
 
 @media (max-width:420px){h1{font-size:30px;-webkit-text-stroke:5px #1f4fd1}.top .logo{width:88px}.stein{width:60px;height:88px}.big{font-size:48px}}
+
+/* app versions */
+.updatebar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px;border-radius:12px;
+  background:linear-gradient(135deg,#1f4fd1,#13328f);color:#fff;font-weight:600;font-size:14px}
+.updatebar .btn{background:var(--gold);color:#3a2600;box-shadow:none}
+.vline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14px;color:var(--muted)}
+.vsummary{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:12px;background:var(--done-soft);color:var(--ink)}
+.vsummary.behind{background:var(--warn-soft)}
+.devices{display:flex;flex-direction:column;gap:4px}
+.dev{display:flex;gap:8px;align-items:center;flex-wrap:wrap}

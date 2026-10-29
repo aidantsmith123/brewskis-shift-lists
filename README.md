@@ -77,6 +77,9 @@ Managers can turn on alerts per phone (tap your name → Notification settings):
 
 ## Making changes later
 
+Every release bumps the version in three places: `APP_VERSION` at the top of `site/app.js`, `site/version.json`, and `VERSION` in `site/sw.js`. Phones on an older version get an "Update now" bar, and managers see who's behind on the Team tab.
+
+
 Database updates live in `supabase/migrations/`. A new database's `schema.sql` already includes them; an existing database needs each new migration run once in the SQL Editor before the matching app update is published.
 
 

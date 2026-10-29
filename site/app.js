@@ -2,6 +2,9 @@
 "use strict";
 
 const CFG = window.BREWSKIS_CONFIG || {};
+/* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
+const APP_VERSION = 7;
+const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
 const CACHE_KEY = "brewskis.state";
@@ -30,6 +33,7 @@ const S = {
   newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
+  latest:null, versions:null, versionsAt:0, helloAt:0, updating:false,
   installEvent:null, push:{loaded:false, sub:null, prefs:null, busy:false, err:""}
 };
 
@@ -82,12 +86,71 @@ async function refresh(){
   try {
     const d = await call("api_state");
     S.data = d; S.dataAt = new Date().toISOString();
+    sayHello();
+    if (S.view==="team" && Date.now() - S.versionsAt > 60000) loadVersions();
     try { localStorage.setItem(CACHE_KEY, JSON.stringify({token:S.session.token, at:S.dataAt, data:d})); } catch(e){}
   } catch(e){
     if (e.code==="not_logged_in"){ logOut("You've been logged out. Enter your number again."); return; }
   }
   S.booting = false;
   render();
+}
+/* ---------- app versions ---------- */
+function deviceId(){
+  try {
+    let id = localStorage.getItem("brewskis.device");
+    if (!id){ id = (crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), b=>b.toString(16).padStart(2,"0")).join("")); localStorage.setItem("brewskis.device", id); }
+    return id;
+  } catch(e){ return null; }
+}
+function platformLabel(){
+  const ua = navigator.userAgent;
+  const dev = (/iPad/.test(ua) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1)) ? "iPad" : /iPhone|iPod/.test(ua) ? "iPhone"
+            : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows PC" : "Computer";
+  return dev + (isStandalone() ? " app" : " browser");
+}
+/* tell the server which version this device is running (at most every 5 minutes) */
+function sayHello(){
+  if (!S.session || Date.now() - S.helloAt < 300000) return;
+  const id = deviceId(); if (!id) return;
+  S.helloAt = Date.now();
+  call("api_hello",{p_device:id, p_version:APP_VERSION, p_platform:platformLabel()}).catch(()=>{ S.helloAt = 0; });
+}
+/* what's the newest version published? */
+let latestAt = 0;
+async function checkLatest(force){
+  if (!force && Date.now() - latestAt < 300000) return;
+  latestAt = Date.now();
+  try {
+    const r = await fetch("version.json?t="+Date.now(), {cache:"no-store"});
+    if (r.ok){ const v = await r.json(); if (v && Number(v.version)){ S.latest = v; render(); } }
+  } catch(e){}
+}
+const latestVersion = () => Math.max(APP_VERSION, Number(S.latest && S.latest.version) || 0);
+const updateReady = () => !!S.latest && Number(S.latest.version) > APP_VERSION;
+function fmtVersionDate(str){ return str ? parseDay(str).toLocaleDateString(undefined,{month:"short", day:"numeric", year:"numeric"}) : ""; }
+async function applyUpdate(){
+  S.updating = true; render();
+  try {
+    const reg = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() : null;
+    if (reg){
+      const changed = new Promise(res=>{ navigator.serviceWorker.addEventListener("controllerchange", res, {once:true}); setTimeout(res, 6000); });
+      await reg.update();
+      if (reg.installing || reg.waiting) await changed;
+    }
+  } catch(e){}
+  location.reload();
+}
+async function loadVersions(){
+  if (!isAdmin()) return;
+  S.versionsAt = Date.now();
+  try { S.versions = await call("api_versions"); render(); } catch(e){}
+}
+function versionLine(){
+  const ready = updateReady();
+  return h("div",{class:"vline"+(ready?" behind":"")},
+    h("span",{text:"App version "+APP_VERSION+" · "+fmtVersionDate(APP_DATE)}),
+    ready ? h("span",{class:"tag warn", text:"Version "+S.latest.version+" is ready"}) : S.latest ? h("span",{class:"tag ok", text:"Up to date"}) : null);
 }
 function setOffline(v){ if (S.offline!==v){ S.offline = v; renderOffline(); } }
 
@@ -424,6 +487,8 @@ function openAccount(){
   openSheet(
     h("h2",{text:"Logged in as "+m.name}),
     h("p",{class:"hint", text:((m.roles||[]).map(roleName).filter(Boolean).join(", ") || "No roles yet") + ". This device logs out by itself 16 hours after you log in."}),
+    versionLine(),
+    updateReady() ? h("button",{type:"button", class:"btn", disabled:S.updating, onclick:()=>{ closeSheet(); applyUpdate(); }}, S.updating ? "Updating…" : "Update now") : null,
     !isStandalone() ? installHelp() : null,
     m.manager ? h("button",{type:"button", class:"btn ghost", onclick:()=>{ closeSheet(); openNotify(); }},"Notification settings") : null,
     h("button",{type:"button", class:"btn", onclick:()=>logOut()},"Log out"),
@@ -926,6 +991,30 @@ function viewInventory(){
 }
 
 /* ---------- Team ---------- */
+/* devices seen in the last 30 days, newest first */
+function devicesOf(staffId){ const cut = Date.now() - 30*86400e3; return (S.versions||[]).filter(v=>v.staff_id===staffId && new Date(v.seen_at).getTime() > cut); }
+function personVersions(s){
+  if (!S.versions || !s.has_login) return null;
+  const devs = devicesOf(s.id), latest = latestVersion();
+  if (!devs.length) return h("div",{class:"devices"}, h("div",{class:"dev"},
+    h("span",{class:"tag warn", text:"Not on version "+latest+" yet"}),
+    h("span",{class:"hint", text:"Hasn't opened the latest app. Ask them to close it and reopen."})));
+  return h("div",{class:"devices"}, devs.map(v=>h("div",{class:"dev"},
+    h("span",{class:"tag "+(v.version>=latest?"ok":"warn"), text: v.version>=latest ? "Up to date" : "Needs update"}),
+    h("span",{class:"hint", text:"Version "+v.version+" · "+(v.platform||"Device")+" · last open "+when(v.seen_at)}))));
+}
+function versionSummary(){
+  if (!S.versions) return h("p",{class:"hint", text:"Checking which version everyone is on…"});
+  const latest = latestVersion();
+  const people = D().staff.filter(s=>s.has_login);
+  const current = people.filter(s=>{ const devs = devicesOf(s.id); return devs.length && devs.every(v=>v.version>=latest); });
+  const behind = people.length - current.length;
+  return h("div",{class:"vsummary"+(behind?" behind":"")},
+    h("b",{text: behind ? current.length+" of "+people.length+" on the latest version" : "Everyone is on the latest version"}),
+    h("span",{class:"hint", text:"Version "+latest+(S.latest && S.latest.date ? " · released "+fmtVersionDate(S.latest.date) : "")+". " +
+      (behind ? "To update, close the app fully and reopen it. Check-ins show up the next time each person opens the app." : "")}));
+}
+
 function loginControl(s){
   const ck = "nopin:"+s.id;
   if (S.pinEdit===s.id){
@@ -951,6 +1040,7 @@ function viewTeam(){
   const d = D(), out = [];
   out.push(h("section",{class:"stack"},
     h("div",{class:"sec-head"}, h("h2",{text:"Team"}), h("span",{class:"hint", text:d.staff.length+" "+(d.staff.length===1?"person":"people")})),
+    versionSummary(),
     h("p",{class:"hint", text:"Everyone logs in with the number you assign here. Only people with the Manager role get manager controls: this Team tab, inventory pars and suppliers, order deadlines, and starter lists."}),
     h("form",{class:"inline", onsubmit:async e=>{ e.preventDefault(); const n = S.newPerson.trim(); if (!n) return; if (await act("api_add_staff",{p_name:n}, n+" added")){ S.newPerson=""; render(); } }},
       h("input",{type:"text", id:"newPerson", placeholder:"Add a person by name", "aria-label":"Name", value:S.newPerson, oninput:e=>S.newPerson=e.target.value}),
@@ -959,6 +1049,7 @@ function viewTeam(){
       const ck = "staff:"+s.id;
       return h("div",{class:"person"},
         h("div",{class:"row"}, h("span",{class:"pname", text:s.name}), isManagerStaff(s) ? h("span",{class:"tag mgmt", text:"Manager"}) : null),
+        personVersions(s),
         h("div",{class:"chips"}, sortedRoles().map(r=>h("button",{type:"button", class:"rolechip "+r.section, "aria-pressed":(s.roles||[]).includes(r.id)?"true":"false",
           onclick:()=>{ const set = new Set(s.roles||[]); set.has(r.id)?set.delete(r.id):set.add(r.id); act("api_set_staff_roles",{p_id:s.id, p_roles:[...set]}); }}, r.name))),
         loginControl(s),
@@ -990,9 +1081,15 @@ function renderOffline(){
   el.hidden = !S.offline;
   el.textContent = S.offline ? "You're offline. " + (S.dataAt ? "Showing info from " + when(S.dataAt) + ". " : "") + "Changes can't be saved until you reconnect." : "";
 }
+function renderUpdateBar(){
+  const show = updateReady() && !!S.session;
+  $("updatebar").hidden = !show;
+  if (show){ $("updatetext").textContent = "Version "+S.latest.version+" of the app is ready."; $("updateBtn").disabled = S.updating; $("updateBtn").textContent = S.updating ? "Updating…" : "Update now"; }
+}
 function render(){
   $("dayLabel").textContent = shiftDayLabel();
   renderOffline();
+  renderUpdateBar();
   $("installBtn").hidden = !S.installEvent || !S.session;
   const m = me(), loggedIn = !!(S.session && m);
   $("whoBtn").hidden = !loggedIn;
@@ -1022,14 +1119,15 @@ function render(){
 /* ---------- wiring ---------- */
 $("whoBtn").addEventListener("click", openAccount);
 $("installBtn").addEventListener("click", install);
+$("updateBtn").addEventListener("click", applyUpdate);
 $("tabShifts").addEventListener("click", ()=>go("overview"));
 $("tabInv").addEventListener("click", ()=>go("inventory"));
-$("tabTeam").addEventListener("click", ()=>go("team"));
+$("tabTeam").addEventListener("click", ()=>{ go("team"); loadVersions(); });
 document.addEventListener("keydown", e=>{
   if (S.session || !document.querySelector(".keypad") || e.target.matches("input,select,textarea")) return;
   if (/^\d$/.test(e.key)) pressKey(e.key); else if (e.key==="Backspace") pressKey("del"); else if (e.key==="Enter") pressKey("go");
 });
-document.addEventListener("visibilitychange", ()=>{ if (!document.hidden){ refresh(); render(); } });
+document.addEventListener("visibilitychange", ()=>{ if (!document.hidden){ refresh(); checkLatest(); render(); } });
 window.addEventListener("online", ()=>{ setOffline(false); refresh(); });
 window.addEventListener("offline", ()=>setOffline(true));
 window.addEventListener("beforeinstallprompt", e=>{ e.preventDefault(); S.installEvent = e; render(); });
@@ -1053,5 +1151,6 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
   if (location.hash==="#inventory") S.view = "inventory";   // opened from an order or out-of-stock notification
   render();
   if (S.session && configured()) refresh();
+  checkLatest(true);
 })();
 window.addEventListener("hashchange", ()=>{ if (location.hash==="#inventory" && S.session){ go("inventory"); } });

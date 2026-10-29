@@ -1,10 +1,11 @@
 // Service worker: keeps the app itself available offline. Data always comes live from Supabase.
-const VERSION = "brewskis-v6";
+const VERSION = "brewskis-v7";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest", "logo.webp",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: "reload" skips the browser's own cache so an update always gets the newest files
+  event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", event => {
@@ -30,6 +31,7 @@ self.addEventListener("fetch", event => {
     return;
   }
   if (url.origin !== self.location.origin) return; // Supabase calls go straight to the network.
+  if (url.pathname.endsWith("/version.json")) return; // always ask the network which version is newest
 
   // App files: answer from cache right away, refresh the cache in the background.
   event.respondWith(caches.open(VERSION).then(async c => {
