@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -510,7 +510,7 @@ function viewLogin(){
     h("div",{class:"pindots"+(S.fx.shake?" shake":""), "aria-live":"polite", "aria-label":S.pin.length+" digits entered"}, Array.from({length:Math.max(4, S.pin.length)}, (_,i)=>h("span",{class:(i<S.pin.length?"on":"")+(S.fx.dot===i+1?" pop":"")}))),
     h("p",{class:"loginerr", role:"alert", text:S.loginBusy ? "Checking…" : S.loginErr}),
     h("div",{class:"keypad"}, keys.map(k=>h("button",{type:"button", class:"key"+(label[k]?" fn":""), disabled:locked||S.loginBusy, "aria-label":k==="del"?"Delete":k==="clear"?"Clear":k, onclick:()=>pressKey(k)}, label[k]||k))),
-    h("button",{type:"button", class:"btn", style:"width:100%", disabled:locked||S.loginBusy||S.pin.length<4, onclick:()=>pressKey("go")},"Log in"))];
+    h("button",{type:"button", class:"btn", style:"width:100%", disabled:locked||S.loginBusy||S.pin.length<4, "data-own-sound":"", onclick:()=>pressKey("go")},"Log in"))];
 }
 function viewNotConfigured(){
   return [h("div",{class:"empty"}, h("h2",{text:"Almost ready"}),
@@ -526,7 +526,7 @@ function openAccount(){
     h("h2",{text:"Logged in as "+m.name}),
     h("p",{class:"hint", text:((m.roles||[]).map(roleName).filter(Boolean).join(", ") || "No roles yet") + ". This device logs out by itself 16 hours after you log in."}),
     h("label",{class:"soundrow", for:"soundToggle"},
-      h("span",{}, h("b",{text:"Sounds"}), h("span",{class:"hint", text:"A clink when you check off a task, ticks when you count, and a few others."+(navigator.vibrate ? " Includes a short vibration." : "")})),
+      h("span",{}, h("b",{text:"Sounds"}), h("span",{class:"hint", text:"A soft tap on every button, a clink when you check off a task, and ticks when you count."+(navigator.vibrate ? " Includes a short vibration." : "")})),
       h("input",{type:"checkbox", id:"soundToggle", class:"switch", role:"switch", checked:soundOn, onchange:e=>setSound(e.target.checked)})),
     versionLine(),
     updateReady() ? h("button",{type:"button", class:"btn", disabled:S.updating, onclick:()=>{ closeSheet(); applyUpdate(); }}, S.updating ? "Updating…" : "Update now") : null,
@@ -693,6 +693,8 @@ const SOUNDS = {
     [784,988,1319].forEach((f,i)=>{ tone(ctx,d,t+i*.09,{freq:f,type:"triangle",gain:.18,dur:.38}); tone(ctx,d,t+i*.09,{freq:f*2,gain:.05,dur:.25}); });
     SOUNDS.clink(ctx, d, t+.3);
   },
+  /* any other button: a short, soft wooden tap */
+  tap(ctx, d, t){ tone(ctx,d,t,{freq:760,to:540,type:"sine",gain:.11,dur:.032,attack:.002}); tone(ctx,d,t,{freq:2300,type:"sine",gain:.025,dur:.012,attack:.001}); },
   /* unchecking: a soft falling tock */
   undo(ctx, d, t){ tone(ctx,d,t,{freq:520,to:330,type:"triangle",gain:.16,dur:.14}); },
   /* counting: tiny ticks, higher for +, lower for − */
@@ -709,6 +711,12 @@ function play(name){
   try { const ctx = audio(); if (ctx) SOUNDS[name](ctx, ctx.destination, ctx.currentTime + .01); } catch(e){}
   try { if (BUZZ[name] && navigator.vibrate) navigator.vibrate(BUZZ[name]); } catch(e){}
 }
+/* every button tap gets the soft tap, unless that button plays its own sound */
+document.addEventListener("click", e=>{
+  const el = e.target.closest && e.target.closest("button, select, [role=button], a[href]");
+  if (!el || el.disabled || el.hasAttribute("data-own-sound")) return;
+  play("tap");
+}, true);
 function setSound(on){
   soundOn = on;
   try { localStorage.setItem("brewskis.sound", on ? "on" : "off"); } catch(e){}
@@ -877,7 +885,7 @@ function taskRow(t, role){
   const done = isDone(t), over = isOverdue(t), due = dueLine(t), editable = canEditTask(t);
   const ck = "task:"+t.id;
   return h("div",{class:"task"+(done?" done":"")+(over?" overdue":"")+(S.fx.task===t.id ? (done?" just-done":" just-undone") : "")},
-    h("button",{type:"button", class:"check", "aria-pressed":done?"true":"false", "aria-label":(done?"Uncheck ":"Check off ")+t.text, disabled:!canWrite(), onclick:()=>toggleTask(t)}, h("span",{}, svgCheck())),
+    h("button",{type:"button", class:"check", "data-own-sound":"", "aria-pressed":done?"true":"false", "aria-label":(done?"Uncheck ":"Check off ")+t.text, disabled:!canWrite(), onclick:()=>toggleTask(t)}, h("span",{}, svgCheck())),
     h("div",{style:"min-width:0"},
       h("div",{class:"text", text:t.text}),
       h("div",{class:"tmeta"},
@@ -961,11 +969,11 @@ function itemRow(it){
         sup && isAdmin() ? h("span",{text:"· "+sup.name}) : null),
       c && c.counted_at ? h("div",{class:"imeta", text:"Counted by "+(c.counted_by_name||staffName(c.counted_by))+" · "+when(c.counted_at)}) : null),
     h("div",{class:"stepper"},
-      h("button",{type:"button", "aria-label":"One less "+it.name, disabled:!canWrite(), onclick:()=>setCount(it, Math.max(0,(oh||0)-1))},"−"),
+      h("button",{type:"button", "data-own-sound":"", "aria-label":"One less "+it.name, disabled:!canWrite(), onclick:()=>setCount(it, Math.max(0,(oh||0)-1))},"−"),
       h("input",{type:"number", id:"cnt-"+it.id, class:S.fx.count===it.id ? "bump" : null, inputmode:"decimal", min:"0", step:"any", "aria-label":"On hand: "+it.name, placeholder:"–", disabled:!canWrite(),
         value: oh==null ? "" : String(oh), onfocus:e=>e.target.select(),
         oninput:e=>{ if (e.target.value==="") return; setCount(it, parseFloat(e.target.value), true); }}),
-      h("button",{type:"button", "aria-label":"One more "+it.name, disabled:!canWrite(), onclick:()=>setCount(it, (oh||0)+1)},"+")));
+      h("button",{type:"button", "data-own-sound":"", "aria-label":"One more "+it.name, disabled:!canWrite(), onclick:()=>setCount(it, (oh||0)+1)},"+")));
 }
 function updateItem(it, patch){
   Object.assign(it, patch); // keep quick back-to-back edits from overwriting each other
@@ -1047,7 +1055,7 @@ function supplierOrderCard(s, d){
     s.last_ordered_at ? h("p",{class:"hint", text:(ordered ? "Ordered by " : "Last order placed by ")+(s.last_ordered_by_name||"someone")+" · "+when(s.last_ordered_at)}) : null,
     !ordered ? h("div",{class:"inline"},
       items.length ? h("button",{type:"button", class:"btn ghost small", onclick:()=>sendOrder(s.name, items)}, navigator.share ? "Send order" : "Copy order") : null,
-      canWrite() ? h("button",{type:"button", class:"btn small", onclick:async ()=>{ if (await act("api_mark_ordered",{p_id:s.id},"Marked as ordered")) play("ok"); }},"Mark order placed") : null) : null);
+      canWrite() ? h("button",{type:"button", class:"btn small", "data-own-sound":"", onclick:async ()=>{ if (await act("api_mark_ordered",{p_id:s.id},"Marked as ordered")) play("ok"); }},"Mark order placed") : null) : null);
 }
 function viewInventory(){
   const admin = isAdmin(), out = [], d = D();
