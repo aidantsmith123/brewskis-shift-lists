@@ -30,7 +30,7 @@ const S = {
   newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
-  installEvent:null
+  installEvent:null, push:{loaded:false, sub:null, prefs:null, busy:false, err:""}
 };
 
 /* ---------- API ---------- */
@@ -425,8 +425,121 @@ function openAccount(){
     h("h2",{text:"Logged in as "+m.name}),
     h("p",{class:"hint", text:((m.roles||[]).map(roleName).filter(Boolean).join(", ") || "No roles yet") + ". This device logs out by itself 16 hours after you log in."}),
     !isStandalone() ? installHelp() : null,
+    m.manager ? h("button",{type:"button", class:"btn ghost", onclick:()=>{ closeSheet(); openNotify(); }},"Notification settings") : null,
     h("button",{type:"button", class:"btn", onclick:()=>logOut()},"Log out"),
     h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
+}
+/* ---------- manager notifications ---------- */
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+function b64uToBytes(str){ const pad = "=".repeat((4 - str.length % 4) % 4); const raw = atob((str + pad).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(raw, c=>c.charCodeAt(0)); }
+const functionsUrl = () => CFG.supabaseUrl.replace(/\/$/,"") + "/functions/v1/notify";
+function openNotify(){ S.view = "notify"; S.push.err = ""; render(); window.scrollTo(0,0); loadPush(); }
+async function loadPush(){
+  if (!pushSupported() || Notification.permission==="denied"){ S.push.loaded = true; return render(); }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    S.push.sub = sub;
+    S.push.prefs = sub ? await call("api_push_get",{p_endpoint:sub.endpoint}) : null;
+  } catch(e){ if (e.code==="not_logged_in") return logOut("You've been logged out. Enter your number again."); S.push.err = errMsg(e); }
+  S.push.loaded = true; render();
+}
+async function savePush(prefs){
+  const j = S.push.sub.toJSON();
+  S.push.prefs = await call("api_push_save",{p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_prefs:prefs});
+}
+async function enablePush(){
+  S.push.busy = true; S.push.err = ""; render();
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted"){ S.push.err = "Notifications weren't allowed on this phone."; return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64uToBytes(CFG.vapidPublicKey)});
+    S.push.sub = sub;
+    await savePush(S.push.prefs || {});
+    toast("Notifications are on for this phone.");
+  } catch(e){ S.push.err = e && e.code ? errMsg(e) : "This phone couldn't turn on notifications. Try again in a moment."; }
+  finally { S.push.busy = false; render(); }
+}
+async function updatePush(patch){
+  const before = {...S.push.prefs};
+  Object.assign(S.push.prefs, patch); render();
+  try { await savePush(S.push.prefs); } catch(e){ S.push.prefs = before; toast(errMsg(e)); }
+  render();
+}
+async function testPush(){
+  S.push.busy = true; render();
+  try {
+    const r = await fetch(functionsUrl(), {method:"POST", headers:{"Content-Type":"application/json", "apikey":CFG.supabaseAnonKey},
+      body:JSON.stringify({test:true, token:S.session.token, endpoint:S.push.sub.endpoint})});
+    const d = await r.json().catch(()=>({}));
+    toast(d.sent ? "Test sent. It should show up in a few seconds." : d.removed ? "This phone stopped accepting notifications. Turn them off and on again." : "The test didn't send. Try again in a minute.");
+  } catch(e){ toast("Couldn't reach the notification service. Check your connection."); }
+  finally { S.push.busy = false; render(); }
+}
+async function disablePush(){
+  S.push.busy = true; render();
+  try { await call("api_push_remove",{p_endpoint:S.push.sub.endpoint}); await S.push.sub.unsubscribe(); S.push.sub = null; S.push.prefs = null; toast("Notifications are off for this phone."); }
+  catch(e){ toast(errMsg(e)); }
+  finally { S.push.busy = false; render(); }
+}
+function prefRow(key, title, desc, extra){
+  const on = !!S.push.prefs[key];
+  return h("div",{class:"prefrow"},
+    h("label",{class:"preflabel", for:"pf-"+key},
+      h("input",{type:"checkbox", id:"pf-"+key, checked:on, disabled:S.push.busy, onchange:e=>updatePush({[key]:e.target.checked})}),
+      h("span",{}, h("b",{text:title}), h("span",{class:"hint", text:desc}))),
+    on && extra ? h("div",{class:"prefextra"}, extra) : null);
+}
+function viewNotify(){
+  if (!isAdmin()){ S.view = "overview"; return viewOverview(); }
+  const out = [h("div",{class:"rolehead"},
+    h("button",{type:"button", class:"back", onclick:()=>go("overview")},"← Back"),
+    h("h2",{text:"Notifications", style:"font-size:32px"}),
+    h("p",{class:"hint", text:"These settings are for this phone only. Each manager turns notifications on on their own phone."}))];
+  if (!pushSupported()){
+    out.push(isIOS() && !isStandalone()
+      ? h("div",{class:"card"}, h("h3",{text:"Add the app to your home screen first"}),
+          h("p",{class:"hint", text:"iPhones only allow notifications from apps opened from the home screen (iOS 16.4 or newer)."}),
+          h("ol",{class:"steps"}, h("li",{text:"Open this page in Safari."}), h("li",{text:"Tap Share, then Add to Home Screen."}), h("li",{text:"Open Brewskis from your home screen and come back here."})))
+      : emptyCard("Notifications aren't available here", isIOS() ? "Update your iPhone to iOS 16.4 or newer to get notifications." : "This browser can't receive notifications. On Android, use Chrome."));
+    return out;
+  }
+  if (Notification.permission==="denied"){
+    out.push(emptyCard("Notifications are blocked", isIOS() ? "Open your iPhone's Settings, tap Notifications, then Brewskis, and turn on Allow Notifications. Then come back here." : "In Chrome, tap the icon to the left of the address (or Settings → Site settings → Notifications) and allow notifications for this site. Then come back here."));
+    return out;
+  }
+  if (!S.push.loaded){ out.push(h("p",{class:"hint", text:"Checking this phone…"})); return out; }
+  if (S.push.err) out.push(h("p",{class:"loginerr", role:"alert", text:S.push.err}));
+  if (!S.push.sub || !S.push.prefs){
+    out.push(h("div",{class:"card"},
+      h("h3",{text:"Get alerts on this phone"}),
+      h("ul",{class:"steps"},
+        h("li",{text:"Order deadlines coming up that haven't been ordered"}),
+        h("li",{text:"Tasks that go overdue, and items counted at zero"}),
+        h("li",{text:"A recap of each shift day's checklists"})),
+      h("button",{type:"button", class:"btn", disabled:S.push.busy, onclick:enablePush}, S.push.busy ? "Turning on…" : "Turn on notifications")));
+    return out;
+  }
+  const p = S.push.prefs;
+  const timeInput = (id, key) => h("input",{type:"time", id, value:p[key], disabled:S.push.busy, onchange:e=>{ if (e.target.value) updatePush({[key]:e.target.value}); }});
+  out.push(h("div",{class:"card prefs"},
+    prefRow("orders", "Order deadlines", "Before a supplier's cutoff, if that order hasn't been marked placed.",
+      h("label",{class:"lbl", for:"pfLead"}, "Remind me",
+        h("select",{id:"pfLead", disabled:S.push.busy, onchange:e=>updatePush({lead_hours:Number(e.target.value)})},
+          [[1,"1 hour before"],[2,"2 hours before"],[4,"4 hours before"],[24,"1 day before"]].map(([v,l])=>h("option",{value:v, selected:Number(p.lead_hours)===v}, l))))),
+    prefRow("overdue", "Overdue tasks", "When a task passes its due date or due time without being checked off. One alert per task."),
+    prefRow("out", "Out of stock", "When someone counts an item at 0."),
+    prefRow("summary", "Nightly recap", "How many checklist tasks got done in the shift day that just ended, and what was missed.",
+      h("label",{class:"lbl", for:"pfRecap"}, "Send at", timeInput("pfRecap","summary_time"))),
+    prefRow("quiet", "Quiet hours", "Alerts wait until quiet hours end. The recap still arrives at the time you picked.",
+      h("div",{class:"inline"}, h("label",{class:"lbl", for:"pfQs"}, "From", timeInput("pfQs","quiet_start")), h("label",{class:"lbl", for:"pfQe"}, "To", timeInput("pfQe","quiet_end"))))));
+  out.push(h("div",{class:"inline"},
+    h("button",{type:"button", class:"btn", disabled:S.push.busy, onclick:testPush},"Send a test"),
+    h("button",{type:"button", class:"btn ghost", disabled:S.push.busy, onclick:disablePush},"Turn off on this phone")));
+  out.push(h("p",{class:"hint", text:"Alerts are checked every 15 minutes, so they can arrive up to 15 minutes after something happens."}));
+  return out;
 }
 function installHelp(){
   if (S.installEvent) return h("button",{type:"button", class:"btn ghost", onclick:install},"Install the app on this device");
@@ -887,7 +1000,7 @@ function render(){
     $("tabShifts").setAttribute("aria-pressed", String(tab==="shifts"));
     $("tabInv").setAttribute("aria-pressed", String(tab==="inventory"));
     $("tabTeam").setAttribute("aria-pressed", String(tab==="team"));
-    kids = S.view==="role" ? viewRole() : S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : viewOverview();
+    kids = S.view==="role" ? viewRole() : S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : viewOverview();
   }
   const active = document.activeElement, aid = active && active.id;
   let sel = null; try { if (aid && active.selectionStart != null) sel = [active.selectionStart, active.selectionEnd]; } catch(e){}
@@ -917,7 +1030,7 @@ setInterval(()=>{
 }, POLL_MS);
 setInterval(()=>{ if (!document.hidden && !(document.activeElement && document.activeElement.matches && document.activeElement.matches("input,select,textarea"))) render(); }, 60000);
 
-if ("serviceWorker" in navigator && location.protocol === "https:"){
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
 }
 
@@ -926,6 +1039,8 @@ if ("serviceWorker" in navigator && location.protocol === "https:"){
   if (S.session){
     try { const c = JSON.parse(localStorage.getItem(CACHE_KEY)||"null"); if (c && c.token===S.session.token){ S.data = c.data; S.dataAt = c.at; } } catch(e){}
   }
+  if (location.hash==="#inventory") S.view = "inventory";   // opened from an order or out-of-stock notification
   render();
   if (S.session && configured()) refresh();
 })();
+window.addEventListener("hashchange", ()=>{ if (location.hash==="#inventory" && S.session){ go("inventory"); } });

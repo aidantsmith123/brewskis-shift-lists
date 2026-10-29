@@ -185,3 +185,12 @@ input[type=date]{width:100%;border:1px solid var(--line);background:var(--paper)
 .supgrid .full{grid-column:1/-1}
 .card .line{display:flex;gap:6px;flex-wrap:wrap}
 .card.ordered{opacity:.85}
+/* notification settings */
+.prefs{gap:0;padding:0}
+.prefrow{padding:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.prefrow:first-child{border-top:0}
+.preflabel{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start;cursor:pointer}
+.preflabel input{width:22px;height:22px;margin:2px 0 0;accent-color:var(--blue)}
+.preflabel span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.prefextra{padding-left:34px;display:flex;flex-direction:column;gap:8px}
+.prefextra .inline .lbl{flex:1}

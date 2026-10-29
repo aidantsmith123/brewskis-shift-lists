@@ -56,6 +56,15 @@ It opens full screen with the Brewski's logo as its icon.
 
 Log in with your number, open the **Team** tab, and tap **Assign number** for Tom, Mandy, Brian and Jill. The app shows each number once so you can tell them.
 
+## Manager notifications
+
+Managers can turn on alerts per phone (tap your name → Notification settings): order deadlines, overdue tasks, items counted at zero, and a nightly recap.
+
+- `supabase/functions/notify` is the sending service (a Supabase Edge Function, deployed with JWT verification off; it checks its own password).
+- `supabase/migrations/2026-10-29_notifications.sql` adds the tables, the rules, and a pg_cron job that calls the function every 15 minutes.
+- The signing keys and the scheduler's password live in the `app_secrets` table and are never committed. To make new ones, generate a VAPID key pair (`npx web-push generate-vapid-keys`), insert `vapid_public`, `vapid_private` and a random `cron_secret` into `app_secrets`, and put the public key in `site/config.js` as `vapidPublicKey`.
+- On iPhone, notifications need iOS 16.4+ and the app opened from the home screen.
+
 ## Good to know
 
 - **Who can do what.** Only people with the Manager role see the Team tab, order deadlines, suppliers and pars. The server enforces this, not just the screen.

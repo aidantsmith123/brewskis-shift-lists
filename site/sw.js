@@ -1,5 +1,5 @@
 // Service worker: keeps the app itself available offline. Data always comes live from Supabase.
-const VERSION = "brewskis-v3";
+const VERSION = "brewskis-v4";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest", "logo.webp",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
 
@@ -36,5 +36,33 @@ self.addEventListener("fetch", event => {
     const hit = await c.match(req, { ignoreSearch: true }) || (req.mode === "navigate" ? await c.match("index.html") : null);
     const fresh = fetch(req).then(res => { if (res.ok) c.put(req, res.clone()); return res; }).catch(() => null);
     return hit || (await fresh) || new Response("Offline", { status: 503 });
+  }));
+});
+
+// Manager notifications sent by the "notify" Edge Function.
+self.addEventListener("push", event => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch (e) { d = { title: "Brewskis", body: event.data ? event.data.text() : "" }; }
+  event.waitUntil(self.registration.showNotification(d.title || "Brewskis", {
+    body: d.body || "",
+    icon: "icons/icon-192.png",
+    tag: d.tag || undefined,
+    renotify: !!d.tag,
+    data: { url: d.url || "./" }
+  }));
+});
+
+// Tapping a notification opens the app (or brings it forward) at the right screen.
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const url = new URL((event.notification.data && event.notification.data.url) || "./", self.registration.scope).href;
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+    for (const c of list) {
+      if (c.url.startsWith(self.registration.scope)) {
+        if (c.navigate) c.navigate(url).catch(() => {});
+        return c.focus();
+      }
+    }
+    return self.clients.openWindow(url);
   }));
 });
