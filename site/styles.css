@@ -363,3 +363,12 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
   .btn:active:not(:disabled),.chip:active,.daychip:active,.rolechip:active,.tabs button:active,.stepper button:active:not(:disabled),.strip:active{transform:scale(.96)}
   button.role:active,.fold-head:active:not(:disabled){transform:scale(.99)}
 }
+
+/* v10: sound setting */
+.soundrow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);cursor:pointer}
+.soundrow > span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.switch{appearance:none;-webkit-appearance:none;flex:none;width:50px;height:30px;border-radius:999px;background:var(--line);position:relative;margin:0;cursor:pointer;transition:background-color .15s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
+.switch:checked{background:var(--done)}
+.switch:checked::after{transform:translateX(20px)}
+@media (prefers-reduced-motion:reduce){.switch,.switch::after{transition:none}}

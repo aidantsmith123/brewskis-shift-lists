@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 10,
   "date": "2026-10-29",
-  "notes": "Subtle animation: tasks, counts, progress, sections and screens respond as you use them."
+  "notes": "Sound effects: a clink when you check off a task, ticks when counting. Turn them off by tapping your name."
 }

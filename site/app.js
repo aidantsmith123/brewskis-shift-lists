@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 9;
+const APP_VERSION = 10;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -76,7 +76,7 @@ async function act(fn, args, okMsg){
   try { await call(fn, args); }
   catch(e){
     if (e.code==="not_logged_in"){ logOut("You've been logged out. Enter your number again."); return false; }
-    toast(errMsg(e)); refresh(); return false;
+    play("nope"); toast(errMsg(e)); refresh(); return false;
   }
   if (okMsg) toast(okMsg);
   await refresh();
@@ -427,12 +427,15 @@ async function toggleTask(t){
   else Object.assign(t, {done:true, done_day:shiftDay(), done_until:RECURRING.has(t.repeat) ? new Date(Date.now()+3600e3).toISOString() : null,
                          done_by:me().id, done_by_name:me().name, done_at:new Date().toISOString()});
   S.fx.task = t.id;
+  if (!isDone(t)) play("undo");
+  else { const rp = progressOf(roleTasks(t.role_id).filter(countsToday)); play(rp.total && rp.done===rp.total ? "cheers" : "clink"); }
   render();
   if (!(await act("api_toggle_task", {p_id:t.id}))){ Object.assign(t, before); render(); }
 }
 function setCount(it, n, quiet){
   if (!canWrite()) return toast(errMsg({code:"offline"}));
   if (!Number.isFinite(n) || n<0) n = 0;
+  if (!quiet){ const before = onHandOf(it); play(before!=null && n < before ? "tickDown" : "tickUp"); }
   S.countDraft[it.id] = n;
   if (!quiet){ S.fx.count = it.id; render(); }
   clearTimeout(S.countTimers[it.id]);
@@ -486,13 +489,14 @@ async function submitPin(){
   try {
     const r = await rpc("api_login", {p_pin:S.pin});
     if (r && r.token){
+      play("ok");
       S.session = {token:r.token, staffId:r.staff_id, at:Date.now()}; storeSession(S.session);
       S.pin = ""; S.view = "overview"; S.booting = true;
       await refresh(); window.scrollTo(0,0); return;
     }
     S.pin = "";
     if (r && r.error==="too_many_attempts"){ S.lockUntil = Date.now()+60000; S.loginErr = "Too many wrong numbers. Wait a minute and try again."; setTimeout(()=>{ S.loginErr=""; render(); }, 60000); }
-    else { S.loginErr = "That number doesn't match anyone. Try again or ask a manager."; S.fx.shake = true; }
+    else { S.loginErr = "That number doesn't match anyone. Try again or ask a manager."; S.fx.shake = true; play("nope"); }
   } catch(e){ S.loginErr = e.code==="offline" ? "You're offline. Connect to log in." : "Couldn't reach the server. Try again."; }
   finally { S.loginBusy = false; render(); }
 }
@@ -521,6 +525,9 @@ function openAccount(){
   openSheet(
     h("h2",{text:"Logged in as "+m.name}),
     h("p",{class:"hint", text:((m.roles||[]).map(roleName).filter(Boolean).join(", ") || "No roles yet") + ". This device logs out by itself 16 hours after you log in."}),
+    h("label",{class:"soundrow", for:"soundToggle"},
+      h("span",{}, h("b",{text:"Sounds"}), h("span",{class:"hint", text:"A clink when you check off a task, ticks when you count, and a few others."+(navigator.vibrate ? " Includes a short vibration." : "")})),
+      h("input",{type:"checkbox", id:"soundToggle", class:"switch", role:"switch", checked:soundOn, onchange:e=>setSound(e.target.checked)})),
     versionLine(),
     updateReady() ? h("button",{type:"button", class:"btn", disabled:S.updating, onclick:()=>{ closeSheet(); applyUpdate(); }}, S.updating ? "Updating…" : "Update now") : null,
     !isStandalone() ? installHelp() : null,
@@ -651,6 +658,63 @@ async function install(){ const ev = S.installEvent; if (!ev) return; S.installE
 /* ---------- shared bits ---------- */
 function progressOf(tasks){ const done = tasks.filter(isDone).length; return {done, total:tasks.length, pct: tasks.length ? Math.round(done/tasks.length*100) : 0}; }
 /* today's progress as a stein from the logo: beer rises with the share of tasks done */
+/* ---------- sound effects ----------
+   Made on the fly with Web Audio, no sound files. Each phone can turn them off (tap your name).
+   On iPhone they follow the ring/silent switch; on Android, media volume. Android also gets a short vibration. */
+let soundOn = (()=>{ try { return localStorage.getItem("brewskis.sound") !== "off"; } catch(e){ return true; } })();
+let actx = null;
+function audio(){
+  if (!actx){
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
+    try { if (navigator.audioSession) navigator.audioSession.type = "ambient"; } catch(e){}   // respect silent mode, don't stop other audio
+    actx = new AC();
+  }
+  if (actx.state==="suspended") actx.resume().catch(()=>{});
+  return actx;
+}
+function tone(ctx, dest, t, o){
+  const osc = ctx.createOscillator(), g = ctx.createGain(), dur = o.dur || 0.2;
+  osc.type = o.type || "sine";
+  osc.frequency.setValueAtTime(o.freq, t);
+  if (o.to) osc.frequency.exponentialRampToValueAtTime(o.to, t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(o.gain || 0.2, t + (o.attack || 0.004));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g); g.connect(dest); osc.start(t); osc.stop(t + dur + 0.03);
+}
+const SOUNDS = {
+  /* checking off a task: two glasses touching */
+  clink(ctx, d, t){
+    [[2093,.20,.55],[3135,.10,.38],[4186,.05,.22]].forEach(([f,g,dur])=>tone(ctx,d,t,{freq:f,gain:g,dur}));
+    [[2489,.14,.45],[3729,.07,.30]].forEach(([f,g,dur])=>tone(ctx,d,t+.065,{freq:f,gain:g,dur}));
+  },
+  /* last task on a role's list for today: a rising chime, then the clink */
+  cheers(ctx, d, t){
+    [784,988,1319].forEach((f,i)=>{ tone(ctx,d,t+i*.09,{freq:f,type:"triangle",gain:.18,dur:.38}); tone(ctx,d,t+i*.09,{freq:f*2,gain:.05,dur:.25}); });
+    SOUNDS.clink(ctx, d, t+.3);
+  },
+  /* unchecking: a soft falling tock */
+  undo(ctx, d, t){ tone(ctx,d,t,{freq:520,to:330,type:"triangle",gain:.16,dur:.14}); },
+  /* counting: tiny ticks, higher for +, lower for − */
+  tickUp(ctx, d, t){ tone(ctx,d,t,{freq:1500,type:"triangle",gain:.12,dur:.045}); },
+  tickDown(ctx, d, t){ tone(ctx,d,t,{freq:1000,type:"triangle",gain:.12,dur:.045}); },
+  /* logged in, order placed: two notes up */
+  ok(ctx, d, t){ tone(ctx,d,t,{freq:660,type:"triangle",gain:.17,dur:.12}); tone(ctx,d,t+.1,{freq:990,type:"triangle",gain:.17,dur:.24}); },
+  /* wrong number, couldn't save: two low notes down */
+  nope(ctx, d, t){ tone(ctx,d,t,{freq:233,type:"square",gain:.05,dur:.11}); tone(ctx,d,t+.14,{freq:185,type:"square",gain:.05,dur:.16}); }
+};
+const BUZZ = {clink:12, cheers:[15,60,30], ok:10, nope:[40,60,40]};
+function play(name){
+  if (!soundOn) return;
+  try { const ctx = audio(); if (ctx) SOUNDS[name](ctx, ctx.destination, ctx.currentTime + .01); } catch(e){}
+  try { if (BUZZ[name] && navigator.vibrate) navigator.vibrate(BUZZ[name]); } catch(e){}
+}
+function setSound(on){
+  soundOn = on;
+  try { localStorage.setItem("brewskis.sound", on ? "on" : "off"); } catch(e){}
+  if (on) play("clink");
+}
+
 /* ---------- motion ----------
    Bars and the stein remember the last value they showed and slide to the new one, so checking off a task
    visibly fills them. The stein pours from empty the first time it's shown after the app opens. */
@@ -983,7 +1047,7 @@ function supplierOrderCard(s, d){
     s.last_ordered_at ? h("p",{class:"hint", text:(ordered ? "Ordered by " : "Last order placed by ")+(s.last_ordered_by_name||"someone")+" · "+when(s.last_ordered_at)}) : null,
     !ordered ? h("div",{class:"inline"},
       items.length ? h("button",{type:"button", class:"btn ghost small", onclick:()=>sendOrder(s.name, items)}, navigator.share ? "Send order" : "Copy order") : null,
-      canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>act("api_mark_ordered",{p_id:s.id},"Marked as ordered")},"Mark order placed") : null) : null);
+      canWrite() ? h("button",{type:"button", class:"btn small", onclick:async ()=>{ if (await act("api_mark_ordered",{p_id:s.id},"Marked as ordered")) play("ok"); }},"Mark order placed") : null) : null);
 }
 function viewInventory(){
   const admin = isAdmin(), out = [], d = D();
