@@ -1,5 +1,5 @@
 {
-  "version": 18,
+  "version": 19,
   "date": "2026-10-29",
-  "notes": "Managers can filter inventory by supplier."
+  "notes": "On tap board: mark kegs on tap or kicked, and show customers what's pouring."
 }

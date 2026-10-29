@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 18;
+const APP_VERSION = 19;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -841,7 +841,7 @@ function viewOverview(){
 
 function activitySection(){
   const admin = isAdmin();
-  const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order"};
+  const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked"};
   /* staff only see activity from their side of the pub, plus inventory counts */
   const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); return place=>ok.has(place); })();
   const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place||""}));
@@ -991,11 +991,63 @@ function viewRole(){
 }
 
 /* ---------- Inventory ---------- */
+/* ---------- on tap ---------- */
+const BOARD_URL = new URL("taps.html", location.href).href;
+const isKeg = it => /^kegs?$/i.test((it.unit||"").trim()) || /keg/i.test((catById(it.cat_id)||{}).name || "");
+const boardName = it => it.tap_label || it.name.replace(/\s+(1\/2|1\/4|1\/6|50L|30L|20L|sixtel|half|keg)$/i, "").trim();
+const onTapItems = () => D().items.filter(it=>it.on_tap);
+async function setOnTap(it, on){
+  if (!canWrite()) return toast(errMsg({code:"offline"}));
+  const before = {on_tap:it.on_tap, tapped_at:it.tapped_at};
+  Object.assign(it, {on_tap:on, tapped_at: on ? new Date().toISOString() : it.tapped_at});
+  play(on ? "ok" : "undo"); render();
+  if (!(await act("api_set_on_tap",{p_item_id:it.id, p_on:on}, on ? boardName(it)+" is on the board" : boardName(it)+" came off the board"))){ Object.assign(it, before); render(); }
+}
+function tapButton(it){
+  const ck = "kick:"+it.id;
+  if (it.on_tap) return S.confirm===ck
+    ? h("button",{type:"button", class:"tapbtn kick", "data-own-sound":"", onclick:()=>{ S.confirm=null; setOnTap(it, false); }},"Tap again: kicked")
+    : h("button",{type:"button", class:"tapbtn on", "aria-pressed":"true", disabled:!canWrite(), onclick:()=>askConfirm(ck)},"On tap");
+  return h("button",{type:"button", class:"tapbtn", "aria-pressed":"false", "data-own-sound":"", disabled:!canWrite(), onclick:()=>setOnTap(it, true)},"Put on tap");
+}
+/* top of Inventory: what's pouring, and the customer board */
+function tapStrip(){
+  const taps = onTapItems();
+  if (!taps.length && !D().items.some(isKeg)) return null;
+  return h("div",{class:"tapstrip"},
+    h("div",{class:"t"},
+      h("b",{text: taps.length ? taps.length+(taps.length===1?" beer":" beers")+" on tap" : "Nothing marked on tap"}),
+      h("span",{class:"hint", text: taps.length ? taps.map(boardName).sort().join(", ") : "Tap “Put on tap” on a keg and it shows on the customer board."})),
+    h("button",{type:"button", class:"btn small", onclick:openBoardSheet},"Board"));
+}
+async function loadQR(){
+  if (window.qrcode) return window.qrcode;
+  await new Promise((res, rej)=>{ const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"; sc.onload = res; sc.onerror = rej; document.head.append(sc); });
+  return window.qrcode;
+}
+function openBoardSheet(){
+  const qrBox = h("div",{class:"qrbox", "aria-label":"QR code for the on tap board"}, h("span",{class:"hint", text:"Making QR code…"}));
+  openSheet(
+    h("h2",{text:"On tap board"}),
+    h("p",{class:"hint", text:"Customers see what's pouring right now. Open it on the bar TV or a tablet, or print the QR code for tables. It updates by itself when a keg is put on or kicked."}),
+    qrBox,
+    h("div",{class:"boardlink", text:BOARD_URL}),
+    h("div",{class:"inline"},
+      h("a",{class:"btn", href:BOARD_URL, target:"_blank", rel:"noopener"},"Open board"),
+      h("button",{type:"button", class:"btn ghost", onclick:async ()=>{ try { await navigator.clipboard.writeText(BOARD_URL); toast("Link copied"); } catch(e){ toast("Press and hold the link to copy it"); } }},"Copy link")),
+    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Close"));
+  loadQR().then(qrcode=>{
+    const q = qrcode(0, "M"); q.addData(BOARD_URL); q.make();
+    qrBox.innerHTML = q.createSvgTag({cellSize:6, margin:2, scalable:true});
+  }).catch(()=>{ qrBox.replaceChildren(h("span",{class:"hint", text:"The QR code needs a connection. The link below works too."})); });
+}
+
 function itemRow(it){
   const st = statusOf(it), c = countOf(it.id), oh = onHandOf(it), sup = supplierById(supplierOf(it));
-  return h("div",{class:"item"},
+  return h("div",{class:"item"+(it.on_tap?" pouring":"")},
     h("div",{style:"min-width:0"},
       h("div",{class:"iname", text:it.name}),
+      isKeg(it) ? h("div",{class:"imeta"}, tapButton(it), it.on_tap && it.tapped_at ? h("span",{text:"since "+when(it.tapped_at)}) : null) : null,
       h("div",{class:"imeta"},
         h("span",{class:"tag "+st.cls, text:st.text}),
         h("span",{text:"Par "+fmtN(parOf(it))+(it.unit?" "+it.unit:"")}),
@@ -1040,6 +1092,10 @@ function itemEditRow(it){
       h("select",{id:"es-"+it.id, onchange:e=>updateItem(it,{supplier_id:e.target.value||null})},
         h("option",{value:"", selected:!it.supplier_id}, listDefaultLabel(it.cat_id)),
         D().suppliers.map(s=>h("option",{value:s.id, selected:it.supplier_id===s.id}, s.name)))),
+    isKeg(it) ? h("label",{class:"lbl wide", for:"tl-"+it.id}, "Name on the board",
+      h("input",{type:"text", id:"tl-"+it.id, value:it.tap_label||"", placeholder:boardName({...it, tap_label:""}), onchange:e=>{ it.tap_label = e.target.value.trim(); act("api_set_tap_info",{p_item_id:it.id, p_label:it.tap_label, p_note:it.tap_note||""}); }})) : null,
+    isKeg(it) ? h("label",{class:"lbl wide", for:"tn-"+it.id}, "Style · ABV (on the board)",
+      h("input",{type:"text", id:"tn-"+it.id, value:it.tap_note||"", placeholder:"e.g. Light lager · 4.2%", onchange:e=>{ it.tap_note = e.target.value.trim(); act("api_set_tap_info",{p_item_id:it.id, p_label:it.tap_label||"", p_note:it.tap_note}); }})) : null,
     h("div",{class:"wide", style:"grid-column:span 2;align-self:center"},
       S.confirm===ck ? h("button",{type:"button", class:"linkbtn warn", onclick:()=>{ S.confirm=null; act("api_remove_item",{p_id:it.id}, it.name+" removed"); }},"Tap again to remove "+it.name)
                      : h("button",{type:"button", class:"linkbtn", onclick:()=>askConfirm(ck)},"Remove item")));
@@ -1134,6 +1190,8 @@ function viewInventory(){
     return out;
   }
 
+  if (!S.invEdit){ const ts = tapStrip(); if (ts) out.push(ts); }
+
   /* suppliers: order deadlines (count mode) or supplier settings (edit mode) */
   if (S.invEdit){
     out.push(fold("suppliers-edit", true, "Suppliers & deadlines", h("span",{class:"tag plain", text:d.suppliers.length+(d.suppliers.length===1?" supplier":" suppliers")}), [
@@ -1190,8 +1248,10 @@ function viewInventory(){
     if (narrowing && !items.length) continue;          // hide lists with nothing to show
     shownLists++;
     const low = all.filter(it=>(needOf(it)||0)>0).length, total = all.length;
+    const pouring = all.filter(it=>it.on_tap).length;
     const badge = narrowing ? h("span",{class:"tag plain", text:items.length+(items.length===1?" match":" matches")})
                 : low ? h("span",{class:"tag warn", text:low+" below par"})
+                : pouring ? h("span",{class:"tag ok", text:pouring+" on tap"})
                 : h("span",{class:"tag plain", text:total+(total===1?" item":" items")});
     const ck = "cat:"+cat.id, body = [];
     if (S.invEdit && !narrowing) body.push(listSupplierPicker(cat));

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>On Tap · JT Brewski's Pub</title>
+<meta name="description" content="What's pouring right now at JT Brewski's Pub.">
+<meta name="theme-color" content="#2a170b">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Barlow:wght@400;500;600;700&display=swap">
+<style>
+/* The customer board: the barrel from the logo, beer names in foam white, styles in gold.
+   Sized to read from across the bar on a TV, and still fine on a phone from the QR code. */
+:root{
+  --wood:#4a2a12; --wood-dark:#1d0f06; --foam:#fff8ea; --gold:#f5c04a; --gold-deep:#d69612; --blue:#1f4fd1; --muted:#d8c3a5;
+  --display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --body:"Barlow","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{color:var(--foam);font-family:var(--body);
+  background:repeating-linear-gradient(90deg, rgba(0,0,0,.28) 0 2px, rgba(255,255,255,.04) 2px 3px, transparent 3px 72px),
+             linear-gradient(180deg,#7a4823 0%,var(--wood) 45%,var(--wood-dark) 100%) fixed;
+  padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left))}
+.board{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:clamp(18px,3vh,36px);min-height:calc(100vh - 40px)}
+header{display:flex;align-items:center;gap:clamp(12px,2vw,28px);flex-wrap:wrap}
+.logo{width:clamp(110px,14vw,220px);aspect-ratio:520/372;background:url("logo.webp") center/contain no-repeat;filter:drop-shadow(0 6px 14px rgba(0,0,0,.5));flex:none}
+h1{margin:0;font-family:var(--display);font-weight:800;text-transform:uppercase;letter-spacing:.03em;line-height:.9;
+  font-size:clamp(52px,9vw,140px);color:#fff;-webkit-text-stroke:clamp(5px,.8vw,10px) var(--blue);paint-order:stroke fill;text-shadow:0 5px 0 rgba(0,0,0,.35)}
+.sub{font-size:clamp(15px,1.6vw,24px);color:var(--gold);font-weight:600;margin-top:6px}
+.hoop{height:7px;border-radius:4px;background:linear-gradient(180deg,#7f868f,#f4f6f8 45%,#9aa1aa);box-shadow:0 2px 6px rgba(0,0,0,.3)}
+.taps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,clamp(240px,26vw,420px)),1fr));gap:clamp(10px,1.6vw,22px)}
+.tap{position:relative;display:flex;flex-direction:column;justify-content:center;gap:4px;min-height:clamp(84px,11vh,150px);
+  padding:clamp(14px,1.6vw,26px) clamp(16px,2vw,30px);border-radius:16px;background:rgba(20,10,4,.55);border:1px solid rgba(245,192,74,.35);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.name{font-family:var(--display);font-weight:800;text-transform:uppercase;letter-spacing:.02em;line-height:1;font-size:clamp(28px,3.4vw,58px);overflow-wrap:anywhere}
+.note{font-size:clamp(15px,1.5vw,24px);color:var(--gold);font-weight:600}
+.new{align-self:flex-start;order:-1;margin-bottom:4px;background:var(--gold);color:#3a2600;font-weight:700;font-size:clamp(12px,1vw,16px);
+  padding:2px 10px;border-radius:999px}
+.empty{font-size:clamp(20px,2.4vw,34px);color:var(--muted);text-align:center;padding:8vh 0}
+footer{margin-top:auto;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:clamp(13px,1.1vw,18px)}
+.stale{color:var(--gold)}
+@media (prefers-reduced-motion: no-preference){ .tap{animation:in .4s ease-out both} @keyframes in{from{opacity:0;transform:translateY(8px)}} }
+body.idle{cursor:none}
+</style>
+</head>
+<body>
+<main class="board">
+  <header>
+    <div class="logo" role="img" aria-label="JT Brewski's Pub"></div>
+    <div>
+      <h1>On tap</h1>
+      <div class="sub" id="count">Checking the taps…</div>
+    </div>
+  </header>
+  <div class="hoop" aria-hidden="true"></div>
+  <ul class="taps" id="taps" aria-live="polite"></ul>
+  <footer><span>JT Brewski's Pub</span><span id="updated"></span></footer>
+</main>
+<script src="config.js"></script>
+<script>
+"use strict";
+const CFG = window.BREWSKIS_CONFIG || {};
+const $ = id => document.getElementById(id);
+let lastKey = "", lastOk = 0;
+function el(tag, cls, text){ const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+async function load(){
+  try {
+    const headers = {"Content-Type":"application/json", "apikey":CFG.supabaseAnonKey};
+    if (/^eyJ/.test(CFG.supabaseAnonKey||"")) headers.Authorization = "Bearer "+CFG.supabaseAnonKey;
+    const r = await fetch(CFG.supabaseUrl.replace(/\/$/,"") + "/rest/v1/rpc/api_on_tap", {method:"POST", headers, body:"{}"});
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    lastOk = Date.now();
+    const taps = d.taps || [];
+    const key = JSON.stringify(taps.map(t=>[t.name,t.note]));
+    if (key !== lastKey){                          // only redraw when something changed, so the TV doesn't flicker
+      lastKey = key;
+      const list = $("taps");
+      if (!taps.length){ list.replaceChildren(el("li","empty","Taps are being changed. Ask your bartender what's pouring.")); }
+      else list.replaceChildren(...taps.map(t=>{
+        const li = el("li","tap");
+        li.append(el("div","name",t.name));
+        if (t.note) li.append(el("div","note",t.note));
+        if (t.tapped_at && Date.now() - new Date(t.tapped_at).getTime() < 3*86400e3) li.append(el("span","new","Just tapped"));
+        return li;
+      }));
+      $("count").textContent = taps.length ? taps.length + (taps.length===1 ? " beer pouring right now" : " beers pouring right now") : "Back in a moment";
+    }
+    $("updated").textContent = "Updated " + new Date().toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+    $("updated").classList.remove("stale");
+  } catch(e){
+    if (Date.now() - lastOk > 5*60e3 && lastOk){ $("updated").textContent = "Reconnecting…"; $("updated").classList.add("stale"); }
+    if (!lastOk) $("count").textContent = "Couldn't load the taps. Retrying…";
+  }
+}
+load(); setInterval(load, 60000);
+document.addEventListener("visibilitychange", ()=>{ if (!document.hidden) load(); });
+/* keep a TV or tablet awake, and hide the mouse when it's not moving */
+async function wake(){ try { if (navigator.wakeLock && !document.hidden) await navigator.wakeLock.request("screen"); } catch(e){} }
+wake(); document.addEventListener("visibilitychange", wake);
+let idleT; const idle = ()=>{ document.body.classList.remove("idle"); clearTimeout(idleT); idleT = setTimeout(()=>document.body.classList.add("idle"), 3000); };
+addEventListener("mousemove", idle); idle();
+</script>
+</body>
+</html>

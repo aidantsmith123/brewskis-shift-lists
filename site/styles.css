@@ -417,3 +417,18 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .supchips::-webkit-scrollbar{display:none}
 .supchips .chip{flex:none}
 .supchips .chip[aria-pressed="true"]{background:var(--blue);border-color:var(--blue);color:var(--blue-ink)}
+
+/* v19: on tap */
+.tapbtn{border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:3px 11px;font-size:13px;font-weight:600}
+.tapbtn.on{background:var(--gold);border-color:var(--gold);color:#3a2600}
+.tapbtn.on::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#3a2600;margin-right:6px;vertical-align:1px}
+.tapbtn.kick{background:var(--danger);border-color:var(--danger);color:#fff}
+.item.pouring{background:linear-gradient(90deg,var(--foh-soft),transparent 70%)}
+.tapstrip{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);
+  background:linear-gradient(135deg,var(--card) 50%,var(--foh-soft))}
+.tapstrip .t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tapstrip .hint{overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.qrbox{width:min(220px,60vw);aspect-ratio:1;align-self:center;display:grid;place-items:center;background:#fff;border-radius:12px;padding:8px}
+.qrbox svg{width:100%;height:100%}
+.boardlink{font-size:13px;color:var(--muted);text-align:center;overflow-wrap:anywhere;user-select:all}
+a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center}

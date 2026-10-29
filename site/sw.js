@@ -1,6 +1,6 @@
 // Service worker: keeps the app itself available offline. Data always comes live from Supabase.
-const VERSION = "brewskis-v18";
-const SHELL = ["./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest", "logo.webp",
+const VERSION = "brewskis-v19";
+const SHELL = ["./", "index.html", "taps.html", "styles.css", "app.js", "config.js", "manifest.webmanifest", "logo.webp",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
@@ -35,9 +35,13 @@ self.addEventListener("fetch", event => {
 
   // App files: answer from cache right away, refresh the cache in the background.
   event.respondWith(caches.open(VERSION).then(async c => {
-    const hit = await c.match(req, { ignoreSearch: true }) || (req.mode === "navigate" ? await c.match("index.html") : null);
+    const hit = await c.match(req, { ignoreSearch: true });
     const fresh = fetch(req).then(res => { if (res.ok) c.put(req, res.clone()); return res; }).catch(() => null);
-    return hit || (await fresh) || new Response("Offline", { status: 503 });
+    if (hit) return hit;
+    const net = await fresh;
+    if (net) return net;
+    // offline and never saved: open the app's main page rather than an error
+    return (req.mode === "navigate" && await c.match("index.html")) || new Response("Offline", { status: 503 });
   }));
 });
 
