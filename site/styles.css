@@ -180,3 +180,8 @@ body{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px))}
 .task.editing form.add{border:0;padding:0;background:none}
 .divider.first{border-top:0}
 input[type=date]{width:100%;border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:9px 12px;min-width:0;font:inherit;color:inherit}
+/* supplier schedules */
+.supgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.supgrid .full{grid-column:1/-1}
+.card .line{display:flex;gap:6px;flex-wrap:wrap}
+.card.ordered{opacity:.85}

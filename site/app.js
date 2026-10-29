@@ -27,7 +27,7 @@ const S = {
   session:null, data:null, dataAt:null, offline:!navigator.onLine, booting:true,
   view:"overview", roleId:null, filter:"all", invFilter:"all", invEdit:false, confirm:null,
   draft:{text:"", assignee:"", repeat:"daily", due_date:"", due_time:""}, editTask:null, editDraft:null, newPerson:"", newRole:"", newRoleSection:"foh",
-  newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:""},
+  newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
   installEvent:null
@@ -217,11 +217,89 @@ function statusOf(it){
   return {cls:"ok", text:"At par"};
 }
 const supplierById = id => D().suppliers.find(s=>s.id===id);
+/* ---------- supplier order schedules ---------- */
+const SUP_SCHEDULES = [["weekly","Weekly"],["biweekly","Every 2 weeks"],["daily","Every day"],["monthly","Monthly"],["once","One time"]];
+const NEEDS_START = new Set(["biweekly","monthly","once"]);
+function atCutoff(day, cutoff){ const [hh,mm] = (cutoff||"14:00").split(":").map(Number); const d = new Date(day.getFullYear(), day.getMonth(), day.getDate()); d.setHours(hh||0, mm||0, 0, 0); return d; }
+function shiftDays(day, n){ return new Date(day.getFullYear(), day.getMonth(), day.getDate()+n); }
+function monthDay(y, m, anchor){ const last = new Date(y, m+1, 0).getDate(); return new Date(y, m, Math.min(anchor, last)); }
+/* next order cutoff after `from` */
 function nextDeadline(sup, from=new Date()){
-  const days = sup.days||[]; if (!days.length) return null;
-  const [hh, mm] = (sup.cutoff||"14:00").split(":").map(Number);
-  for (let i=0;i<8;i++){ const d = new Date(from); d.setDate(from.getDate()+i); d.setHours(hh||0, mm||0, 0, 0); if (days.includes(d.getDay()) && d>from) return d; }
+  const sched = sup.schedule || "weekly", cut = sup.cutoff;
+  if (sched==="weekly"){
+    const days = sup.days||[]; if (!days.length) return null;
+    for (let i=0;i<8;i++){ const c = atCutoff(shiftDays(from,i), cut); if (days.includes(c.getDay()) && c > from) return c; }
+    return null;
+  }
+  if (sched==="daily"){ const c = atCutoff(from, cut); return c > from ? c : atCutoff(shiftDays(from,1), cut); }
+  if (!sup.start_date) return null;
+  const start = parseDay(sup.start_date);
+  if (sched==="once"){ const c = atCutoff(start, cut); return c > from ? c : null; }
+  if (sched==="biweekly"){
+    let d = start;
+    if (atCutoff(d,cut) <= from){ const jumps = Math.max(0, Math.floor((from - atCutoff(d,cut)) / (14*86400e3)) - 1); d = shiftDays(d, 14*jumps); }
+    for (let i=0; i<60 && atCutoff(d,cut) <= from; i++) d = shiftDays(d, 14);
+    return atCutoff(d, cut);
+  }
+  if (sched==="monthly"){
+    const anchor = start.getDate();
+    let y = start.getFullYear(), m = start.getMonth();
+    if (from > start){ y = from.getFullYear(); m = from.getMonth() - 1; }
+    for (let i=0;i<40;i++){ const d = monthDay(y, m+i, anchor); const c = atCutoff(d, cut); if (d >= start && c > from) return c; }
+    return null;
+  }
   return null;
+}
+/* the most recent order cutoff at or before `from` */
+function prevDeadline(sup, from=new Date()){
+  const sched = sup.schedule || "weekly", cut = sup.cutoff;
+  if (sched==="weekly"){
+    const days = sup.days||[]; if (!days.length) return null;
+    for (let i=0;i<8;i++){ const c = atCutoff(shiftDays(from,-i), cut); if (days.includes(c.getDay()) && c <= from) return c; }
+    return null;
+  }
+  if (sched==="daily"){ const c = atCutoff(from, cut); return c <= from ? c : atCutoff(shiftDays(from,-1), cut); }
+  if (!sup.start_date) return null;
+  const start = parseDay(sup.start_date), first = atCutoff(start, cut);
+  if (first > from) return null;
+  if (sched==="once") return first;
+  const n = nextDeadline(sup, from); if (!n) return null;
+  const p = sched==="biweekly" ? atCutoff(shiftDays(n,-14), cut) : atCutoff(monthDay(n.getFullYear(), n.getMonth()-1, start.getDate()), cut);
+  return p >= first ? p : null;
+}
+/* has the order for the next deadline been placed?
+   An order placed right after a cutoff is usually a late order for the round that just closed, so it only
+   counts toward the next deadline once it's placed in the second half of the round. When unsure, keep reminding. */
+function orderedThisRound(sup){
+  if (!sup.last_ordered_at) return false;
+  const last = new Date(sup.last_ordered_at), setAt = sup.schedule_set_at ? new Date(sup.schedule_set_at) : null;
+  if ((sup.schedule||"weekly")==="once") return setAt ? last >= setAt : true;
+  const prev = prevDeadline(sup), next = nextDeadline(sup);
+  if (prev && (!setAt || prev > setAt)){
+    const mid = next ? new Date(prev.getTime() + (next - prev)/2) : prev;
+    return last > mid;
+  }
+  return setAt ? last > setAt : false;
+}
+function supScheduleLabel(sup){
+  const sched = sup.schedule || "weekly";
+  const start = sup.start_date ? parseDay(sup.start_date) : null;
+  if (sched==="weekly") return (sup.days||[]).length ? "Weekly · "+(sup.days||[]).slice().sort().map(i=>DAYS[i]).join(", ") : "Weekly";
+  if (sched==="daily") return "Every day";
+  if (sched==="biweekly") return "Every 2 weeks" + (start ? " · "+DAYS[start.getDay()] : "");
+  if (sched==="monthly") return "Monthly" + (start ? " · "+ordinal(start.getDate()) : "");
+  return "One time";
+}
+function supScheduleHint(n){
+  const t = " by "+fmtClock(n.cutoff||"14:00");
+  const start = n.start_date ? parseDay(n.start_date) : null;
+  const first = start ? start.toLocaleDateString(undefined,{month:"short", day:"numeric"}) : "";
+  if (n.schedule==="weekly"){ const ds = (n.days||[]).slice().sort().map(i=>DAYS[i]); return ds.length ? "Order every "+(ds.length>1 ? ds.slice(0,-1).join(", ")+" and "+ds[ds.length-1] : ds[0])+t+"." : "Pick the days you order."; }
+  if (n.schedule==="daily") return "Order every day"+t+".";
+  if (!start) return "Pick the first order date.";
+  if (n.schedule==="biweekly") return "Order every other "+start.toLocaleDateString(undefined,{weekday:"long"})+t+", starting "+first+".";
+  if (n.schedule==="monthly") return "Order on the "+ordinal(start.getDate())+" of every month"+t+", starting "+first+". Short months use their last day.";
+  return "Order once, "+first+t+".";
 }
 function dueText(d){
   if (!d) return "No order days set";
@@ -232,7 +310,7 @@ function dueText(d){
   return day+" "+t+" · in "+rel;
 }
 const belowPar = supId => D().items.filter(it=>(supId===undefined || (it.supplier_id||null)===supId) && (needOf(it)||0)>0);
-const suppliersByDeadline = () => D().suppliers.map(s=>({s, d:nextDeadline(s)})).sort((a,b)=>(a.d?a.d.getTime():Infinity)-(b.d?b.d.getTime():Infinity)||a.s.name.localeCompare(b.s.name));
+const suppliersByDeadline = () => D().suppliers.map(s=>({s, d:nextDeadline(s), ordered:orderedThisRound(s)})).sort((a,b)=>Number(a.ordered)-Number(b.ordered)||(a.d?a.d.getTime():Infinity)-(b.d?b.d.getTime():Infinity)||a.s.name.localeCompare(b.s.name));
 
 let toastTimer;
 function toast(msg){ const el = $("toast"); el.textContent = msg; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(()=>el.hidden=true, 3400); }
@@ -378,7 +456,7 @@ function viewOverview(){
     h("div",{class:"eyebrow", text: p.total ? (p.done===p.total ? "Everything due today is done" : "Tasks done today across all shifts") : "Nothing due today. Open a role to add tasks."}),
     bar(p.pct)));
   if (admin && d.suppliers.length){
-    const next = suppliersByDeadline().find(x=>x.d);
+    const next = suppliersByDeadline().find(x=>x.d && !x.ordered);
     if (next){
       const n = belowPar(next.s.id).length, soon = next.d - new Date() < 24*3600e3;
       out.push(h("button",{type:"button", class:"strip"+(soon?" urgent":""), onclick:()=>go("inventory")},
@@ -607,30 +685,50 @@ function dayChips(selected, onToggle, idPrefix){
 }
 function saveSupplier(s, patch){
   Object.assign(s, patch);
-  const n = {name:s.name, days:s.days||[], cutoff:s.cutoff, notes:s.notes};
-  return act("api_save_supplier",{p_id:s.id, p_name:n.name, p_days:n.days, p_cutoff:n.cutoff, p_notes:n.notes});
+  return act("api_save_supplier",{p_id:s.id, p_name:s.name, p_days:s.days||[], p_cutoff:s.cutoff, p_notes:s.notes,
+    p_schedule:s.schedule||"weekly", p_start_date:NEEDS_START.has(s.schedule) ? (s.start_date||shiftDay()) : null});
+}
+/* schedule pickers for a supplier; `n` is the supplier (or the new-supplier draft), `set` saves a change */
+function supScheduleFields(n, set, pre){
+  return [
+    h("label",{class:"lbl", for:pre+"Sched"}, "Order schedule",
+      h("select",{id:pre+"Sched", onchange:e=>{ const v = e.target.value; set({schedule:v, start_date: NEEDS_START.has(v) ? (n.start_date || shiftDay()) : n.start_date}); }},
+        SUP_SCHEDULES.map(([v,l])=>h("option",{value:v, selected:(n.schedule||"weekly")===v}, l)))),
+    h("label",{class:"lbl", for:pre+"Cut"}, "Order by (cutoff time)", h("input",{type:"time", id:pre+"Cut", value:n.cutoff||"14:00", onchange:e=>{ if (e.target.value) set({cutoff:e.target.value}); }})),
+    (n.schedule||"weekly")==="weekly" ? h("div",{class:"lbl full"}, "Order days", dayChips(n.days||[], i=>{ const st = new Set(n.days||[]); st.has(i)?st.delete(i):st.add(i); set({days:[...st].sort()}); }, pre+"Day")) : null,
+    NEEDS_START.has(n.schedule) ? h("label",{class:"lbl full", for:pre+"Start"}, n.schedule==="once" ? "Order date" : "First order date",
+      h("input",{type:"date", id:pre+"Start", value:n.start_date||"", onchange:e=>{ if (e.target.value) set({start_date:e.target.value}); }})) : null,
+    h("p",{class:"hint full", text:supScheduleHint({...n, schedule:n.schedule||"weekly"})})
+  ];
 }
 function supplierEditCard(s){
   const ck = "sup:"+s.id;
   return h("div",{class:"card"},
     h("label",{class:"lbl", for:"sn-"+s.id}, "Supplier", h("input",{type:"text", id:"sn-"+s.id, value:s.name, onchange:e=>{ const v=e.target.value.trim(); if (v && v!==s.name) saveSupplier(s,{name:v}); }})),
-    h("div",{class:"lbl"}, "Order days", dayChips(s.days||[], i=>{ const set = new Set(s.days||[]); set.has(i)?set.delete(i):set.add(i); saveSupplier(s,{days:[...set].sort()}); }, "sd-"+s.id+"-")),
-    h("label",{class:"lbl", for:"sc-"+s.id}, "Order by (cutoff time)", h("input",{type:"time", id:"sc-"+s.id, value:s.cutoff||"14:00", onchange:e=>{ if (e.target.value) saveSupplier(s,{cutoff:e.target.value}); }})),
+    h("div",{class:"supgrid"}, supScheduleFields(s, patch=>saveSupplier(s, patch), "s"+s.id+"-")),
     h("label",{class:"lbl", for:"so-"+s.id}, "Notes", h("input",{type:"text", id:"so-"+s.id, value:s.notes||"", placeholder:"Rep name, phone, how to order", onchange:e=>saveSupplier(s,{notes:e.target.value.trim()})})),
     h("div",{}, S.confirm===ck ? h("button",{type:"button", class:"linkbtn warn", onclick:()=>{ S.confirm=null; act("api_remove_supplier",{p_id:s.id}, s.name+" removed"); }},"Tap again to remove "+s.name)
                                : h("button",{type:"button", class:"linkbtn", onclick:()=>askConfirm(ck)},"Remove supplier")));
 }
 function supplierOrderCard(s, d){
-  const items = belowPar(s.id), soon = d && d - new Date() < 24*3600e3;
-  return h("div",{class:"card"+(soon && items.length ? " urgent" : "")},
-    h("div",{class:"row"}, h("h3",{text:s.name}), h("span",{class:"tag "+(items.length?"warn":"ok"), text: items.length ? items.length+" to order" : "Nothing low"})),
-    h("div",{class:"due"+(soon?" soon":""), text:"Order by "+dueText(d)}),
+  const items = belowPar(s.id), ordered = orderedThisRound(s), soon = d && d - new Date() < 24*3600e3;
+  const once = (s.schedule||"weekly")==="once", missed = once && !d && !ordered && !!s.start_date;
+  const dueAt = d || (once && s.start_date ? atCutoff(parseDay(s.start_date), s.cutoff) : null);
+  const stamp = x => x.toLocaleDateString(undefined,{weekday:"short", month:"short", day:"numeric"})+", "+x.toLocaleTimeString(undefined,{hour:"numeric", minute:"2-digit"});
+  const dueTextLine = ordered ? (d ? "Ordered for "+dueText(d) : dueAt ? "Was due "+stamp(dueAt) : "")
+                    : missed ? "Missed · was due "+stamp(dueAt)
+                    : d ? "Order by "+dueText(d) : "No order days set";
+  return h("div",{class:"card"+(!ordered && (missed || (soon && items.length)) ? " urgent" : "")+(ordered ? " ordered" : "")},
+    h("div",{class:"row"}, h("h3",{text:s.name}),
+      h("span",{class:"tag "+(ordered ? "ok" : missed ? "danger" : items.length ? "warn" : "ok"), text: ordered ? "Ordered" : missed ? "Missed" : items.length ? items.length+" to order" : "Nothing low"})),
+    h("div",{class:"line"}, h("span",{class:"tag plain", text:supScheduleLabel(s)})),
+    h("div",{class:"due"+(!ordered && (soon || missed) ? " soon" : ""), text:dueTextLine}),
     s.notes ? h("p",{class:"hint", text:s.notes}) : null,
-    items.length ? h("ul",{class:"orderlines"}, items.map(it=>h("li",{}, h("span",{text:it.name}), h("span",{class:"q", text:fmtN(needOf(it))+(it.unit?" "+it.unit:"")})))) : null,
-    s.last_ordered_at ? h("p",{class:"hint", text:"Last order placed by "+(s.last_ordered_by_name||"someone")+" · "+when(s.last_ordered_at)}) : null,
-    h("div",{class:"inline"},
+    !ordered && items.length ? h("ul",{class:"orderlines"}, items.map(it=>h("li",{}, h("span",{text:it.name}), h("span",{class:"q", text:fmtN(needOf(it))+(it.unit?" "+it.unit:"")})))) : null,
+    s.last_ordered_at ? h("p",{class:"hint", text:(ordered ? "Ordered by " : "Last order placed by ")+(s.last_ordered_by_name||"someone")+" · "+when(s.last_ordered_at)}) : null,
+    !ordered ? h("div",{class:"inline"},
       items.length ? h("button",{type:"button", class:"btn ghost small", onclick:()=>sendOrder(s.name, items)}, navigator.share ? "Send order" : "Copy order") : null,
-      canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>act("api_mark_ordered",{p_id:s.id},"Marked as ordered")},"Mark order placed") : null));
+      canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>act("api_mark_ordered",{p_id:s.id},"Marked as ordered")},"Mark order placed") : null) : null);
 }
 function viewInventory(){
   const admin = isAdmin(), out = [], d = D();
@@ -651,16 +749,17 @@ function viewInventory(){
       h("div",{class:"sec-head"}, h("h2",{text:"Suppliers & deadlines"})),
       d.suppliers.map(supplierEditCard),
       h("form",{class:"add", onsubmit:async e=>{ e.preventDefault(); const n = S.newSup; if (!n.name.trim()) return;
-          if (await act("api_save_supplier",{p_id:null, p_name:n.name, p_days:[...n.days].sort(), p_cutoff:n.cutoff, p_notes:n.notes}, n.name.trim()+" added")){ S.newSup = {name:"", days:[], cutoff:"14:00", notes:""}; render(); } }},
+          if (await act("api_save_supplier",{p_id:null, p_name:n.name, p_days:[...n.days].sort(), p_cutoff:n.cutoff, p_notes:n.notes,
+                p_schedule:n.schedule, p_start_date:NEEDS_START.has(n.schedule) ? (n.start_date||shiftDay()) : null}, n.name.trim()+" added")){
+            S.newSup = {name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""}; render(); } }},
         h("label",{class:"lbl full", for:"nsName"}, "New supplier", h("input",{type:"text", id:"nsName", placeholder:"e.g. Restaurant Depot", value:S.newSup.name, oninput:e=>S.newSup.name=e.target.value})),
-        h("div",{class:"lbl full"}, "Order days", dayChips(S.newSup.days, i=>{ const set = new Set(S.newSup.days); set.has(i)?set.delete(i):set.add(i); S.newSup.days=[...set]; render(); }, "nsd-")),
-        h("label",{class:"lbl", for:"nsCut"}, "Order by", h("input",{type:"time", id:"nsCut", value:S.newSup.cutoff, oninput:e=>S.newSup.cutoff=e.target.value})),
-        h("label",{class:"lbl", for:"nsNotes"}, "Notes", h("input",{type:"text", id:"nsNotes", placeholder:"Rep, phone", value:S.newSup.notes, oninput:e=>S.newSup.notes=e.target.value})),
+        supScheduleFields(S.newSup, patch=>{ Object.assign(S.newSup, patch); render(); }, "ns"),
+        h("label",{class:"lbl full", for:"nsNotes"}, "Notes", h("input",{type:"text", id:"nsNotes", placeholder:"Rep, phone", value:S.newSup.notes, oninput:e=>S.newSup.notes=e.target.value})),
         h("button",{type:"submit", class:"btn full"},"Add supplier"))));
   } else {
     if (admin){
       const sec = h("section",{class:"stack"}, h("div",{class:"sec-head"}, h("h2",{text:"Order deadlines"}), h("span",{class:"tag mgmt", text:"Managers only"})));
-      if (!d.suppliers.length) sec.append(h("p",{class:"hint", text:"Add your suppliers and their order days under Edit lists & pars. Each one gets a countdown and an order list built from your counts."}));
+      if (!d.suppliers.length) sec.append(h("p",{class:"hint", text:"Add your suppliers and their order schedules under Edit lists & pars. Each one gets a countdown and an order list built from your counts."}));
       else for (const {s, d:dl} of suppliersByDeadline()) sec.append(supplierOrderCard(s, dl));
       const loose = belowPar(null).filter(it=>!supplierById(it.supplier_id));
       if (loose.length) sec.append(h("div",{class:"card"},

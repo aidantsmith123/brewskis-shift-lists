@@ -105,6 +105,17 @@ alter table tasks add column if not exists done_until timestamptz;
 alter table tasks drop constraint if exists tasks_repeat_check;
 alter table tasks add constraint tasks_repeat_check check (repeat in ('daily','weekly','biweekly','monthly','once'));
 
+-- Supplier order schedules (added Oct 2026). Safe to re-run on an existing database.
+--   schedule:        daily | weekly (on the chosen days) | biweekly | monthly | once
+--   start_date:      first order date for every-2-weeks, monthly and one-time schedules
+--   schedule_set_at: when the schedule last changed, so a new schedule starts with nothing marked ordered
+alter table suppliers add column if not exists schedule text not null default 'weekly';
+alter table suppliers add column if not exists start_date date;
+alter table suppliers add column if not exists schedule_set_at timestamptz;  -- existing suppliers keep their current ordered status
+alter table suppliers alter column schedule_set_at set default now();
+alter table suppliers drop constraint if exists suppliers_schedule_check;
+alter table suppliers add constraint suppliers_schedule_check check (schedule in ('daily','weekly','biweekly','monthly','once'));
+
 do $$
 declare t text;
 begin
@@ -480,16 +491,30 @@ set search_path = public, extensions as $$
 declare me staff := _mgr(p_token);
 begin delete from items where id = p_id; end $$;
 
-create or replace function api_save_supplier(p_token uuid, p_id text, p_name text, p_days int[], p_cutoff text, p_notes text) returns void language plpgsql
+drop function if exists api_save_supplier(uuid, text, text, int[], text, text);
+create or replace function api_save_supplier(p_token uuid, p_id text, p_name text, p_days int[], p_cutoff text, p_notes text,
+                                             p_schedule text default 'weekly', p_start_date date default null) returns void language plpgsql
 set search_path = public, extensions as $$
 declare me staff := _mgr(p_token);
+        sched text := case when p_schedule in ('daily','weekly','biweekly','monthly','once') then p_schedule else 'weekly' end;
+        sd date := p_start_date; dys int[] := coalesce(p_days, '{}'); old suppliers;
 begin
   if coalesce(trim(p_name),'') = '' then raise exception 'empty'; end if;
   if coalesce(p_cutoff,'') !~ '^\d{2}:\d{2}$' then p_cutoff := '14:00'; end if;
+  if sched in ('biweekly','monthly','once') then sd := coalesce(sd, _shift_day()); else sd := null; end if;
+  if sched <> 'weekly' then dys := '{}'; end if;
   if p_id is null or p_id = '' then
-    insert into suppliers (name, days, cutoff, notes) values (trim(p_name), coalesce(p_days,'{}'), p_cutoff, coalesce(trim(p_notes),''));
+    insert into suppliers (name, days, cutoff, notes, schedule, start_date, schedule_set_at)
+    values (trim(p_name), dys, p_cutoff, coalesce(trim(p_notes),''), sched, sd, now());
   else
-    update suppliers set name = trim(p_name), days = coalesce(p_days,'{}'), cutoff = p_cutoff, notes = coalesce(trim(p_notes),'') where id = p_id;
+    select * into old from suppliers where id = p_id;
+    if not found then raise exception 'not_found'; end if;
+    update suppliers set name = trim(p_name), days = dys, cutoff = p_cutoff, notes = coalesce(trim(p_notes),''),
+                         schedule = sched, start_date = sd,
+                         schedule_set_at = case when old.schedule is distinct from sched or old.start_date is distinct from sd
+                                                  or old.days is distinct from dys or old.cutoff is distinct from p_cutoff
+                                                then now() else old.schedule_set_at end
+     where id = p_id;
   end if;
 end $$;
 
