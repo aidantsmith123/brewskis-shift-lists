@@ -551,6 +551,15 @@ async function install(){ const ev = S.installEvent; if (!ev) return; S.installE
 
 /* ---------- shared bits ---------- */
 function progressOf(tasks){ const done = tasks.filter(isDone).length; return {done, total:tasks.length, pct: tasks.length ? Math.round(done/tasks.length*100) : 0}; }
+/* today's progress as a stein from the logo: beer rises with the share of tasks done */
+let steinPoured = false;
+function stein(pct){
+  const pour = !steinPoured; steinPoured = true;   // the pour animates once per app open, not on every refresh
+  return h("div",{class:"stein"+(pour?" pour":""), "aria-hidden":"true"},
+    h("div",{class:"stein-glass"},
+      h("div",{class:"stein-beer"+(pct>0?" has-foam":""), style:"height:"+Math.max(0,Math.min(100,pct))+"%"}),
+      h("div",{class:"stein-hoops"})));
+}
 function bar(pct){ return h("div",{class:"bar", role:"progressbar", "aria-valuenow":pct, "aria-valuemin":0, "aria-valuemax":100}, h("i",{style:"width:"+pct+"%"})); }
 function emptyCard(title, body, ...actions){ actions = actions.filter(Boolean); return h("div",{class:"empty"}, h("h2",{text:title}), h("p",{text:body}), actions.length ? h("div",{class:"inline"}, actions) : null); }
 function svgCheck(){ const s = document.createElementNS("http://www.w3.org/2000/svg","svg"); s.setAttribute("viewBox","0 0 24 24"); s.innerHTML = '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color:var(--card)"/>'; return s; }
@@ -564,10 +573,12 @@ function viewOverview(){
   const all = d.tasks.filter(t=>roleById(t.role_id) && countsToday(t));
   const p = progressOf(all);
   const myRoles = new Set(me().roles||[]);
-  out.push(h("section",{class:"summary", "aria-label":"Today's progress"},
-    h("div",{class:"big"}, String(p.done), h("small",{text:"/"+p.total})),
-    h("div",{class:"eyebrow", text: p.total ? (p.done===p.total ? "Everything due today is done" : "Tasks done today across all shifts") : "Nothing due today. Open a role to add tasks."}),
-    bar(p.pct)));
+  out.push(h("section",{class:"summary", "aria-label":"Today's progress: "+p.done+" of "+p.total+" tasks done"},
+    stein(p.pct),
+    h("div",{class:"sumtext"},
+      h("div",{class:"big"}, String(p.done), h("small",{text:" of "+p.total})),
+      h("div",{class:"sumlabel", text: p.total ? (p.done===p.total ? "Everything due today is done" : "tasks done today, across every shift") : "Nothing due today. Open a role to add tasks."}),
+      p.total && p.done < p.total ? h("div",{class:"sumleft", text:(p.total-p.done)+" to go"}) : null)));
   if (admin && d.suppliers.length){
     const next = suppliersByDeadline().find(x=>x.d && !x.ordered);
     if (next){
@@ -580,7 +591,7 @@ function viewOverview(){
   for (const [sec, label, short] of SECTIONS){
     const roles = sortedRoles(sec); if (!roles.length) continue;
     out.push(h("section",{},
-      h("div",{class:"sec-head"}, h("h2",{text:label}), h("span",{class:"tag "+sec, text:short})),
+      h("div",{class:"sec-head"}, h("h2",{class:"sec-"+sec, text:label}), h("span",{class:"tag "+sec, text:short})),
       h("div",{class:"rows"}, roles.map(r=>{
         const rp = progressOf(roleTasks(r.id).filter(countsToday)); const people = roleStaff(r.id).map(s=>s.name);
         const over = roleTasks(r.id).filter(isOverdue).length;
