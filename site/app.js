@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -33,7 +33,7 @@ const S = {
   newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
-  invQuery:"", open:loadOpen(),
+  invQuery:"", open:loadOpen(), fx:{},
   latest:null, versions:null, versionsAt:0, helloAt:0, updating:false,
   installEvent:null, push:{loaded:false, sub:null, prefs:null, busy:false, err:""}
 };
@@ -102,6 +102,7 @@ function isOpen(key, byDefault){ return key in S.open ? !!S.open[key] : byDefaul
 function toggleOpen(key, byDefault){
   S.open[key] = !isOpen(key, byDefault);
   try { localStorage.setItem("brewskis.open", JSON.stringify(S.open)); } catch(e){}
+  S.fx.fold = key;
   render();
 }
 /* a section with a tappable header; `forced` keeps it open while a search or filter is showing matches */
@@ -114,7 +115,7 @@ function fold(key, byDefault, title, badge, body, opts={}){
       h("span",{class:"chev", "aria-hidden":"true"}),
       h("h2",{class:opts.titleClass||"", text:title}),
       badge || null),
-    open ? h("div",{class:"fold-body stack", id}, body) : null);
+    open ? h("div",{class:"fold-body stack"+(S.fx.fold===key ? " reveal" : ""), id}, body) : null);
 }
 /* does an item match the inventory search? every word has to appear in its name or unit */
 function matchesQuery(it, q){
@@ -404,7 +405,11 @@ const belowPar = supId => D().items.filter(it=>(supId===undefined || (it.supplie
 const suppliersByDeadline = () => D().suppliers.map(s=>({s, d:nextDeadline(s), ordered:orderedThisRound(s)})).sort((a,b)=>Number(a.ordered)-Number(b.ordered)||(a.d?a.d.getTime():Infinity)-(b.d?b.d.getTime():Infinity)||a.s.name.localeCompare(b.s.name));
 
 let toastTimer;
-function toast(msg){ const el = $("toast"); el.textContent = msg; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(()=>el.hidden=true, 3400); }
+function toast(msg){
+  const el = $("toast"); el.textContent = msg; el.hidden = false;
+  el.classList.remove("show"); void el.offsetWidth; el.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>el.hidden=true, 3400);
+}
 function askConfirm(key){ S.confirm = key; render(); setTimeout(()=>{ if (S.confirm===key){ S.confirm=null; render(); } }, 4000); }
 function go(view){ S.view = view; S.confirm = null; render(); window.scrollTo(0,0); }
 function openSheet(...kids){
@@ -421,6 +426,7 @@ async function toggleTask(t){
   if (isDone(t)) Object.assign(t, {done:false, done_day:null, done_until:null, done_by:null, done_by_name:null, done_at:null});
   else Object.assign(t, {done:true, done_day:shiftDay(), done_until:RECURRING.has(t.repeat) ? new Date(Date.now()+3600e3).toISOString() : null,
                          done_by:me().id, done_by_name:me().name, done_at:new Date().toISOString()});
+  S.fx.task = t.id;
   render();
   if (!(await act("api_toggle_task", {p_id:t.id}))){ Object.assign(t, before); render(); }
 }
@@ -428,7 +434,7 @@ function setCount(it, n, quiet){
   if (!canWrite()) return toast(errMsg({code:"offline"}));
   if (!Number.isFinite(n) || n<0) n = 0;
   S.countDraft[it.id] = n;
-  if (!quiet) render();
+  if (!quiet){ S.fx.count = it.id; render(); }
   clearTimeout(S.countTimers[it.id]);
   S.countTimers[it.id] = setTimeout(async ()=>{
     const v = S.countDraft[it.id];
@@ -471,7 +477,7 @@ function pressKey(k){
   if (k==="del") S.pin = S.pin.slice(0,-1);
   else if (k==="clear") S.pin = "";
   else if (k==="go") return submitPin();
-  else if (S.pin.length < 6) S.pin += k;
+  else if (S.pin.length < 6){ S.pin += k; S.fx.dot = S.pin.length; }
   render();
 }
 async function submitPin(){
@@ -486,7 +492,7 @@ async function submitPin(){
     }
     S.pin = "";
     if (r && r.error==="too_many_attempts"){ S.lockUntil = Date.now()+60000; S.loginErr = "Too many wrong numbers. Wait a minute and try again."; setTimeout(()=>{ S.loginErr=""; render(); }, 60000); }
-    else S.loginErr = "That number doesn't match anyone. Try again or ask a manager.";
+    else { S.loginErr = "That number doesn't match anyone. Try again or ask a manager."; S.fx.shake = true; }
   } catch(e){ S.loginErr = e.code==="offline" ? "You're offline. Connect to log in." : "Couldn't reach the server. Try again."; }
   finally { S.loginBusy = false; render(); }
 }
@@ -497,7 +503,7 @@ function viewLogin(){
     h("div",{class:"logo", role:"img", "aria-label":"JT Brewski's Pub logo"}),
     h("h2",{text:"Enter your number"}),
     h("p",{class:"hint", text:"Your manager gives you a 4 to 6 digit login number."}),
-    h("div",{class:"pindots", "aria-live":"polite", "aria-label":S.pin.length+" digits entered"}, Array.from({length:Math.max(4, S.pin.length)}, (_,i)=>h("span",{class:i<S.pin.length?"on":""}))),
+    h("div",{class:"pindots"+(S.fx.shake?" shake":""), "aria-live":"polite", "aria-label":S.pin.length+" digits entered"}, Array.from({length:Math.max(4, S.pin.length)}, (_,i)=>h("span",{class:(i<S.pin.length?"on":"")+(S.fx.dot===i+1?" pop":"")}))),
     h("p",{class:"loginerr", role:"alert", text:S.loginBusy ? "Checking…" : S.loginErr}),
     h("div",{class:"keypad"}, keys.map(k=>h("button",{type:"button", class:"key"+(label[k]?" fn":""), disabled:locked||S.loginBusy, "aria-label":k==="del"?"Delete":k==="clear"?"Clear":k, onclick:()=>pressKey(k)}, label[k]||k))),
     h("button",{type:"button", class:"btn", style:"width:100%", disabled:locked||S.loginBusy||S.pin.length<4, onclick:()=>pressKey("go")},"Log in"))];
@@ -645,15 +651,47 @@ async function install(){ const ev = S.installEvent; if (!ev) return; S.installE
 /* ---------- shared bits ---------- */
 function progressOf(tasks){ const done = tasks.filter(isDone).length; return {done, total:tasks.length, pct: tasks.length ? Math.round(done/tasks.length*100) : 0}; }
 /* today's progress as a stein from the logo: beer rises with the share of tasks done */
-let steinPoured = false;
+/* ---------- motion ----------
+   Bars and the stein remember the last value they showed and slide to the new one, so checking off a task
+   visibly fills them. The stein pours from empty the first time it's shown after the app opens. */
+const lastShown = new Map();
+function growFrom(key, pct, firstFrom){
+  const to = Math.max(0, Math.min(100, pct));
+  const from = lastShown.has(key) ? lastShown.get(key) : firstFrom;
+  lastShown.set(key, to);
+  return {from: from==null ? to : from, to};
+}
 function stein(pct){
-  const pour = !steinPoured; steinPoured = true;   // the pour animates once per app open, not on every refresh
-  return h("div",{class:"stein"+(pour?" pour":""), "aria-hidden":"true"},
+  const g = growFrom("stein", pct, 0);
+  return h("div",{class:"stein", "aria-hidden":"true"},
     h("div",{class:"stein-glass"},
-      h("div",{class:"stein-beer"+(pct>0?" has-foam":""), style:"height:"+Math.max(0,Math.min(100,pct))+"%"}),
+      h("div",{class:"stein-beer"+(pct>0?" has-foam":""), style:"height:"+g.from+"%", "data-grow-h":g.to}),
       h("div",{class:"stein-hoops"})));
 }
-function bar(pct){ return h("div",{class:"bar", role:"progressbar", "aria-valuenow":pct, "aria-valuemin":0, "aria-valuemax":100}, h("i",{style:"width:"+pct+"%"})); }
+function bar(pct, key){
+  const g = key ? growFrom(key, pct) : {from:pct, to:pct};
+  return h("div",{class:"bar", role:"progressbar", "aria-valuenow":pct, "aria-valuemin":0, "aria-valuemax":100},
+    h("i",{style:"width:"+g.from+"%", "data-grow-w":g.to}));
+}
+/* after each render: slide bars to their new values, and fade in a newly opened screen */
+let lastScreen = null;
+function afterRender(){
+  const els = document.querySelectorAll("[data-grow-w],[data-grow-h]");
+  if (els.length){
+    els[0].getBoundingClientRect();   // lock in the starting size so the change animates
+    requestAnimationFrame(()=>els.forEach(el=>{
+      if (el.dataset.growW!=null) el.style.width = el.dataset.growW+"%";
+      if (el.dataset.growH!=null) el.style.height = el.dataset.growH+"%";
+    }));
+  }
+  const screen = !S.session ? "login" : S.view + (S.view==="role" ? ":"+S.roleId : "");
+  if (screen !== lastScreen){
+    const main = $("view");
+    if (lastScreen !== null){ main.classList.remove("enter"); void main.offsetWidth; main.classList.add("enter"); }
+    lastScreen = screen;
+  }
+  S.fx = {};   // one-shot effects only play on the render that triggered them
+}
 function emptyCard(title, body, ...actions){ actions = actions.filter(Boolean); return h("div",{class:"empty"}, h("h2",{text:title}), h("p",{text:body}), actions.length ? h("div",{class:"inline"}, actions) : null); }
 function svgCheck(){ const s = document.createElementNS("http://www.w3.org/2000/svg","svg"); s.setAttribute("viewBox","0 0 24 24"); s.innerHTML = '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color:var(--card)"/>'; return s; }
 const doneName = t => t.done_by_name || staffName(t.done_by);
@@ -690,7 +728,7 @@ function viewOverview(){
         const over = roleTasks(r.id).filter(isOverdue).length;
         return h("button",{type:"button", class:"role"+(myRoles.has(r.id)?" mine":""), onclick:()=>{ S.roleId=r.id; S.filter="all"; go("role"); }},
           h("span",{class:"name", text:r.name + (myRoles.has(r.id) ? " · You" : "")}),
-          h("span",{class:"count"}, h("span",{text: rp.total ? rp.done+"/"+rp.total : "No tasks"}), rp.total ? bar(rp.pct) : null),
+          h("span",{class:"count"}, h("span",{text: rp.total ? rp.done+"/"+rp.total : "No tasks"}), rp.total ? bar(rp.pct, "role:"+r.id) : null),
           h("span",{class:"people", text: (over ? over+" overdue · " : "") + (people.length ? people.join(", ") : "No one assigned")}));
       }))));
   }
@@ -774,7 +812,7 @@ function taskRow(t, role){
   if (S.editTask===t.id && S.editDraft) return h("div",{class:"task editing"}, editTaskForm(t, role));
   const done = isDone(t), over = isOverdue(t), due = dueLine(t), editable = canEditTask(t);
   const ck = "task:"+t.id;
-  return h("div",{class:"task"+(done?" done":"")+(over?" overdue":"")},
+  return h("div",{class:"task"+(done?" done":"")+(over?" overdue":"")+(S.fx.task===t.id ? (done?" just-done":" just-undone") : "")},
     h("button",{type:"button", class:"check", "aria-pressed":done?"true":"false", "aria-label":(done?"Uncheck ":"Check off ")+t.text, disabled:!canWrite(), onclick:()=>toggleTask(t)}, h("span",{}, svgCheck())),
     h("div",{style:"min-width:0"},
       h("div",{class:"text", text:t.text}),
@@ -812,7 +850,7 @@ function viewRole(){
     h("div",{class:"meta"}, h("span",{text: p.total ? p.done+" of "+p.total+" done today" : allTasks.length ? "Nothing due today" : "No tasks yet"}),
       p.total && p.done===p.total ? h("span",{class:"tag ok", text:"All done"}) : null,
       overCount ? h("span",{class:"tag danger", text:overCount+" overdue"}) : null),
-    p.total ? bar(p.pct) : null));
+    p.total ? bar(p.pct, "role:"+role.id) : null));
   if (people.length) out.push(h("div",{class:"chips", role:"group", "aria-label":"Show tasks for"},
     [["all","Everyone's tasks"],["everyone","Shared only"], ...people.map(s=>[s.id, s.name])].map(([id,label])=>
       h("button",{type:"button", class:"chip", "aria-pressed":S.filter===id?"true":"false", onclick:()=>{ S.filter=id; render(); }}, label))));
@@ -860,7 +898,7 @@ function itemRow(it){
       c && c.counted_at ? h("div",{class:"imeta", text:"Counted by "+(c.counted_by_name||staffName(c.counted_by))+" · "+when(c.counted_at)}) : null),
     h("div",{class:"stepper"},
       h("button",{type:"button", "aria-label":"One less "+it.name, disabled:!canWrite(), onclick:()=>setCount(it, Math.max(0,(oh||0)-1))},"−"),
-      h("input",{type:"number", id:"cnt-"+it.id, inputmode:"decimal", min:"0", step:"any", "aria-label":"On hand: "+it.name, placeholder:"–", disabled:!canWrite(),
+      h("input",{type:"number", id:"cnt-"+it.id, class:S.fx.count===it.id ? "bump" : null, inputmode:"decimal", min:"0", step:"any", "aria-label":"On hand: "+it.name, placeholder:"–", disabled:!canWrite(),
         value: oh==null ? "" : String(oh), onfocus:e=>e.target.select(),
         oninput:e=>{ if (e.target.value==="") return; setCount(it, parseFloat(e.target.value), true); }}),
       h("button",{type:"button", "aria-label":"One more "+it.name, disabled:!canWrite(), onclick:()=>setCount(it, (oh||0)+1)},"+")));
@@ -1166,6 +1204,7 @@ function render(){
   const active = document.activeElement, aid = active && active.id;
   let sel = null; try { if (aid && active.selectionStart != null) sel = [active.selectionStart, active.selectionEnd]; } catch(e){}
   $("view").replaceChildren(...kids);
+  afterRender();
   if (aid){ const el = $(aid); if (el && el !== active){ el.focus(); if (sel && el.setSelectionRange) try { el.setSelectionRange(sel[0], sel[1]); } catch(e){} } }
 }
 

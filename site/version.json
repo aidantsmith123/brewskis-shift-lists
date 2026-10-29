@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 9,
   "date": "2026-10-29",
-  "notes": "Inventory search, and order deadlines and each list now open and close."
+  "notes": "Subtle animation: tasks, counts, progress, sections and screens respond as you use them."
 }

@@ -312,3 +312,54 @@ h2.sec-foh{color:var(--foh)} h2.sec-boh{color:var(--boh)} h2.sec-mgmt{color:var(
 .empty-search{padding:8px 2px}
 /* keep the phone's status bar area solid when the page scrolls under it */
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);background:#2a170b;z-index:40}
+
+/* v9: subtle motion. Everything here answers something a person did; none of it runs with reduced motion on. */
+@media (prefers-reduced-motion: no-preference){
+  /* bars and the stein slide to their new level */
+  .bar i{transition:width .6s cubic-bezier(.2,.8,.2,1)}
+  .stein-beer{transition:height .9s cubic-bezier(.2,.75,.2,1)}
+  .stein-beer.has-foam::before{animation:foam 3.2s ease-in-out infinite alternate}
+  @keyframes foam{from{transform:translateY(0)}to{transform:translateY(-1.5px)}}
+
+  /* switching screens: a short fade and rise */
+  #view.enter{animation:enter .22s ease-out}
+  @keyframes enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  /* checking off a task: the box pops, the check draws in, the row glows green for a moment */
+  .task.just-done .check{animation:pop .32s cubic-bezier(.3,1.6,.5,1)}
+  .task.just-done .check path{stroke-dasharray:22;stroke-dashoffset:22;animation:draw .28s .06s ease-out forwards}
+  .task.just-done{animation:glow .9s ease-out}
+  .task.just-undone .check{animation:pop .25s ease-out}
+  @keyframes pop{0%{transform:scale(.8)}60%{transform:scale(1.12)}100%{transform:scale(1)}}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @keyframes glow{from{background:var(--done-soft)}to{background:transparent}}
+
+  /* counting: the number gives a small bump */
+  .stepper input.bump{animation:bump .22s ease-out}
+  @keyframes bump{50%{transform:scale(1.18)}}
+
+  /* opening a section: its contents fade down into place */
+  .fold-body.reveal{animation:reveal .2s ease-out}
+  @keyframes reveal{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+  .fold-head{transition:border-color .15s, background-color .15s}
+
+  /* login: each digit's dot pops in; a wrong number shakes the dots */
+  .pindots span{transition:background-color .12s, border-color .12s}
+  .pindots span.pop{animation:pop .22s ease-out}
+  .pindots.shake{animation:shake .38s ease-in-out}
+  @keyframes shake{20%{transform:translateX(-8px)}40%{transform:translateX(7px)}60%{transform:translateX(-5px)}80%{transform:translateX(3px)}}
+
+  /* sheets slide up, toasts and the update bar ease in */
+  .sheet{animation:fadein .18s ease-out}
+  .sheet .panel{animation:sheetup .26s cubic-bezier(.2,.8,.2,1)}
+  @keyframes fadein{from{opacity:0}}
+  @keyframes sheetup{from{transform:translateY(40px);opacity:.6}}
+  .toast.show{animation:toastin .24s cubic-bezier(.2,.8,.2,1)}
+  @keyframes toastin{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+  .updatebar{animation:reveal .3s ease-out}
+
+  /* buttons give a little when pressed */
+  .btn,.chip,.daychip,.rolechip,.tabs button,.stepper button,.fold-head,.role,.strip{transition:transform .08s ease-out, background-color .15s, box-shadow .15s, border-color .15s}
+  .btn:active:not(:disabled),.chip:active,.daychip:active,.rolechip:active,.tabs button:active,.stepper button:active:not(:disabled),.strip:active{transform:scale(.96)}
+  button.role:active,.fold-head:active:not(:disabled){transform:scale(.99)}
+}
