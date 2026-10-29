@@ -1,9 +1,9 @@
-/* Brewskis Shift Lists — PWA front end. Talks to Supabase only through the api_* database functions. */
+/* JT Brewski's staff app — PWA front end. Talks to Supabase only through the api_* database functions. */
 "use strict";
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 14;
+const APP_VERSION = 15;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";

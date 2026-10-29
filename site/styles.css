@@ -401,3 +401,9 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
   @keyframes introRise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
   @keyframes introPour{to{height:125%}}
 }
+
+/* v15: header reads "JT Brewski's" with "Staff app" under it */
+.brand .kicker{margin-top:3px}
+.brand > div:last-child{min-width:0}
+.brand h1{white-space:nowrap;font-size:clamp(24px,8.2vw,38px);-webkit-text-stroke-width:clamp(4px,1.4vw,6px)}
+.intro-center{gap:0}
