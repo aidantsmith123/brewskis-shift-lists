@@ -171,3 +171,12 @@ body{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px))}
 .topright{display:flex;gap:8px;align-items:center;min-width:0;justify-content:flex-end}
 .steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:15px}
 @media (max-width:420px){.who #whoName{display:none}.who{padding:5px}}
+/* task schedules */
+.due-line{font-weight:500}
+.due-line.soon{color:var(--warn)}
+.due-line.over{color:var(--danger);font-weight:700}
+.task.overdue .check{border-color:var(--danger)}
+.task.editing{grid-template-columns:1fr;padding:10px}
+.task.editing form.add{border:0;padding:0;background:none}
+.divider.first{border-top:0}
+input[type=date]{width:100%;border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:9px 12px;min-width:0;font:inherit;color:inherit}

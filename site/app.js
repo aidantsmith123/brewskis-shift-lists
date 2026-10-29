@@ -26,7 +26,7 @@ const INV_STARTERS = {
 const S = {
   session:null, data:null, dataAt:null, offline:!navigator.onLine, booting:true,
   view:"overview", roleId:null, filter:"all", invFilter:"all", invEdit:false, confirm:null,
-  draft:{text:"", assignee:"", repeat:"daily"}, newPerson:"", newRole:"", newRoleSection:"foh",
+  draft:{text:"", assignee:"", repeat:"daily", due_date:"", due_time:""}, editTask:null, editDraft:null, newPerson:"", newRole:"", newRoleSection:"foh",
   newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
@@ -139,7 +139,63 @@ const roleById = id => D().roles.find(r=>r.id===id);
 const roleName = id => (roleById(id)||{}).name || "";
 const staffById = id => D().staff.find(s=>s.id===id);
 const isManagerStaff = s => !!s && (s.roles||[]).some(id=>(roleById(id)||{}).section==="mgmt");
-function isDone(t){ return t.repeat==="daily" ? t.done_day===shiftDay() : !!t.done; }
+/* ---------- task schedules ---------- */
+const REPEATS = [["daily","Every shift"],["weekly","Weekly"],["biweekly","Every 2 weeks"],["monthly","Monthly"],["once","Just once"]];
+const RECURRING = new Set(["weekly","biweekly","monthly"]);
+function parseDay(str){ const [y,m,d] = str.split("-").map(Number); return new Date(y, m-1, d); }
+function addDays(str, n){ const d = parseDay(str); d.setDate(d.getDate()+n); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+/* when a task is due: with no time it's due by the end of that shift day (5 AM); times before 5 AM count as late that same shift day */
+function deadlineOf(dateStr, timeStr){
+  if (!dateStr) return null;
+  const [y,m,d] = dateStr.split("-").map(Number);
+  if (!timeStr) return new Date(y, m-1, d+1, ROLL_HOUR, 0);
+  const [hh,mm] = timeStr.split(":").map(Number);
+  return hh < ROLL_HOUR ? new Date(y, m-1, d+1, hh, mm) : new Date(y, m-1, d, hh, mm);
+}
+const hhmm = t => t ? String(t).slice(0,5) : "";
+function fmtClock(t){ const [h,m] = hhmm(t).split(":").map(Number); return new Date(2000,0,1,h,m).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"}); }
+function fmtDue(dateStr){
+  const today = shiftDay(); if (dateStr===today) return "today"; if (dateStr===addDays(today,1)) return "tomorrow";
+  const d = parseDay(dateStr), diff = Math.round((d - parseDay(today))/86400e3);
+  if (diff > 1 && diff < 7) return d.toLocaleDateString(undefined,{weekday:"short"});
+  return d.toLocaleDateString(undefined,{weekday:"short", month:"short", day:"numeric"});
+}
+function ordinal(n){ const s = ["th","st","nd","rd"], v = n % 100; return n + (s[(v-20)%10] || s[v] || s[0]); }
+function repeatLabel(t){
+  const wd = t.due_date ? parseDay(t.due_date).toLocaleDateString(undefined,{weekday:"short"}) : "";
+  return ({daily:"Daily", weekly:"Weekly · "+wd, biweekly:"Every 2 weeks · "+wd, monthly:"Monthly · "+ordinal(t.anchor_day || (t.due_date ? parseDay(t.due_date).getDate() : 1)), once:"One-time"})[t.repeat] || "Daily";
+}
+function isDone(t){
+  if (t.repeat==="daily") return t.done_day===shiftDay();
+  if (RECURRING.has(t.repeat)) return !!t.done_until && new Date(t.done_until) > new Date();
+  return !!t.done;
+}
+function taskDeadline(t){ return t.repeat==="daily" ? (t.due_time ? deadlineOf(shiftDay(), hhmm(t.due_time)) : null) : deadlineOf(t.due_date, hhmm(t.due_time)); }
+const isOverdue = t => !isDone(t) && !!taskDeadline(t) && new Date() > taskDeadline(t);
+/* "now" = on today's list, "later" = coming up, "done" */
+function bucket(t){
+  if (isDone(t)) return "done";
+  if (t.repeat==="daily" || !t.due_date) return "now";
+  return t.due_date <= shiftDay() ? "now" : "later";
+}
+/* what counts toward today's progress: everything due today or overdue, plus anything finished during today's shift */
+function countsToday(t){
+  const b = bucket(t);
+  if (b==="now") return true;
+  if (b==="done") return t.repeat==="daily" || (!!t.done_at && new Date(t.done_at) >= new Date(shiftStartISO()));
+  return false;
+}
+function dueLine(t){
+  if (isDone(t)){
+    if (RECURRING.has(t.repeat) && t.due_date) return {cls:"", text:"Next due "+fmtDue(t.due_date)+(t.due_time?" by "+fmtClock(t.due_time):"")};
+    return null;
+  }
+  if (t.repeat==="daily") return t.due_time ? {cls:isOverdue(t)?"over":"", text:(isOverdue(t)?"Overdue · was due by ":"Due by ")+fmtClock(t.due_time)} : null;
+  if (!t.due_date) return null;
+  const when = fmtDue(t.due_date) + (t.due_time ? " by "+fmtClock(t.due_time) : "");
+  if (isOverdue(t)) return {cls:"over", text:"Overdue · was due "+when};
+  return {cls: t.due_date===shiftDay() ? "soon" : "", text:"Due "+when};
+}
 function secIdx(s){ const i = SECTIONS.findIndex(x=>x[0]===s); return i<0 ? 9 : i; }
 function sortedRoles(sec){ return D().roles.filter(r=>!sec||r.section===sec).sort((a,b)=>secIdx(a.section)-secIdx(b.section)||(a.sort||0)-(b.sort||0)||a.name.localeCompare(b.name)); }
 const roleTasks = id => D().tasks.filter(t=>t.role_id===id);
@@ -192,9 +248,10 @@ const closeSheet = () => { $("sheet").hidden = true; };
 /* ---------- actions ---------- */
 async function toggleTask(t){
   if (!canWrite()) return toast(errMsg({code:"offline"}));
-  const before = {done:t.done, done_day:t.done_day, done_by:t.done_by, done_by_name:t.done_by_name, done_at:t.done_at};
-  if (isDone(t)) Object.assign(t, {done:false, done_day:null, done_by:null, done_by_name:null, done_at:null});
-  else Object.assign(t, {done:true, done_day:shiftDay(), done_by:me().id, done_by_name:me().name, done_at:new Date().toISOString()});
+  const before = {done:t.done, done_day:t.done_day, done_until:t.done_until, done_by:t.done_by, done_by_name:t.done_by_name, done_at:t.done_at};
+  if (isDone(t)) Object.assign(t, {done:false, done_day:null, done_until:null, done_by:null, done_by_name:null, done_at:null});
+  else Object.assign(t, {done:true, done_day:shiftDay(), done_until:RECURRING.has(t.repeat) ? new Date(Date.now()+3600e3).toISOString() : null,
+                         done_by:me().id, done_by_name:me().name, done_at:new Date().toISOString()});
   render();
   if (!(await act("api_toggle_task", {p_id:t.id}))){ Object.assign(t, before); render(); }
 }
@@ -313,12 +370,12 @@ const addedName = t => t.added_by_name || (t.added_by ? staffName(t.added_by) : 
 function viewOverview(){
   const out = [], d = D(), admin = isAdmin();
   if (!d.roles.length) return [emptyCard("No roles set up yet", admin ? "Add roles on the Team tab. Each role gets its own checklist." : "A manager needs to set up the roles first.")];
-  const all = d.tasks.filter(t=>roleById(t.role_id));
+  const all = d.tasks.filter(t=>roleById(t.role_id) && countsToday(t));
   const p = progressOf(all);
   const myRoles = new Set(me().roles||[]);
   out.push(h("section",{class:"summary", "aria-label":"Today's progress"},
     h("div",{class:"big"}, String(p.done), h("small",{text:"/"+p.total})),
-    h("div",{class:"eyebrow", text: p.total ? (p.done===p.total ? "Every list is done" : "Tasks done across all shifts") : "No tasks yet. Open a role to add some."}),
+    h("div",{class:"eyebrow", text: p.total ? (p.done===p.total ? "Everything due today is done" : "Tasks done today across all shifts") : "Nothing due today. Open a role to add tasks."}),
     bar(p.pct)));
   if (admin && d.suppliers.length){
     const next = suppliersByDeadline().find(x=>x.d);
@@ -334,11 +391,12 @@ function viewOverview(){
     out.push(h("section",{},
       h("div",{class:"sec-head"}, h("h2",{text:label}), h("span",{class:"tag "+sec, text:short})),
       h("div",{class:"rows"}, roles.map(r=>{
-        const rp = progressOf(roleTasks(r.id)); const people = roleStaff(r.id).map(s=>s.name);
+        const rp = progressOf(roleTasks(r.id).filter(countsToday)); const people = roleStaff(r.id).map(s=>s.name);
+        const over = roleTasks(r.id).filter(isOverdue).length;
         return h("button",{type:"button", class:"role"+(myRoles.has(r.id)?" mine":""), onclick:()=>{ S.roleId=r.id; S.filter="all"; go("role"); }},
           h("span",{class:"name", text:r.name + (myRoles.has(r.id) ? " · You" : "")}),
           h("span",{class:"count"}, h("span",{text: rp.total ? rp.done+"/"+rp.total : "No tasks"}), rp.total ? bar(rp.pct) : null),
-          h("span",{class:"people", text: people.length ? people.join(", ") : "No one assigned"}));
+          h("span",{class:"people", text: (over ? over+" overdue · " : "") + (people.length ? people.join(", ") : "No one assigned")}));
       }))));
   }
   out.push(activitySection());
@@ -347,7 +405,7 @@ function viewOverview(){
 
 function activitySection(){
   const admin = isAdmin();
-  const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", count:" counted %", ordered:" placed the % order"};
+  const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order"};
   const ev = D().log.map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place||""}));
   let shown = ev;
   const q = admin ? S.actQuery.trim().toLowerCase() : "";
@@ -373,21 +431,67 @@ function activitySection(){
   return sec;
 }
 
+function canEditTask(t){ const m = me(); return canWrite() && (isAdmin() || (!!t.added_by && t.added_by===m.id)); }
+
+/* repeat, due date and due time pickers, shared by the add and edit forms */
+function scheduleFields(d, pre){
+  const rec = RECURRING.has(d.repeat);
+  return [
+    h("label",{class:"lbl", for:pre+"Repeat"}, "Repeats",
+      h("select",{id:pre+"Repeat", onchange:e=>{ d.repeat = e.target.value; if (RECURRING.has(d.repeat) && !d.due_date) d.due_date = shiftDay(); render(); }},
+        REPEATS.map(([v,l])=>h("option",{value:v, selected:d.repeat===v}, l)))),
+    d.repeat!=="daily" ? h("label",{class:"lbl", for:pre+"Date"}, rec ? "First due" : "Due date",
+      h("input",{type:"date", id:pre+"Date", value:d.due_date||"", required:rec, oninput:e=>d.due_date=e.target.value})) : null,
+    h("label",{class:"lbl", for:pre+"Time"}, d.repeat==="daily" ? "Due by (optional)" : "Time (optional)",
+      h("input",{type:"time", id:pre+"Time", value:d.due_time||"", oninput:e=>d.due_time=e.target.value})),
+    d.repeat!=="daily" || d.due_time ? h("p",{class:"hint full", text:scheduleHint(d)}) : null
+  ];
+}
+function scheduleHint(d){
+  const t = d.due_time ? " by "+fmtClock(d.due_time) : "";
+  if (d.repeat==="daily") return "Due every shift"+t+". It's flagged overdue after that.";
+  if (!d.due_date) return d.repeat==="once" ? "No due date: it stays on the list until someone checks it off." : "Pick the first due date.";
+  const day = parseDay(d.due_date);
+  const wd = day.toLocaleDateString(undefined,{weekday:"long"});
+  const first = day.toLocaleDateString(undefined,{month:"short", day:"numeric"});
+  if (d.repeat==="weekly") return "Due every "+wd+t+", starting "+first+".";
+  if (d.repeat==="biweekly") return "Due every other "+wd+t+", starting "+first+".";
+  if (d.repeat==="monthly") return "Due on the "+ordinal(day.getDate())+" of every month"+t+", starting "+first+". Short months use their last day.";
+  return "Due "+first+t+".";
+}
+function editTaskForm(t, role){
+  const d = S.editDraft, assignees = (roleStaff(role.id).length ? roleStaff(role.id) : D().staff).slice().sort((a,b)=>a.name.localeCompare(b.name));
+  return h("form",{class:"add edit-task", onsubmit:async e=>{ e.preventDefault(); if (!d.text.trim()) return;
+      if (d.repeat!=="daily" && d.repeat!=="once" && !d.due_date) return toast("Pick the first due date.");
+      if (await act("api_update_task",{p_id:t.id, p_text:d.text, p_assignee:d.assignee||null, p_repeat:d.repeat, p_due_date:d.repeat==="daily" ? null : (d.due_date||null), p_due_time:d.due_time||null},"Task updated")){ S.editTask = null; render(); } }},
+    h("label",{class:"lbl full", for:"edText"}, "Task", h("input",{type:"text", id:"edText", value:d.text, oninput:e=>d.text=e.target.value})),
+    h("label",{class:"lbl full", for:"edAssignee"}, "For",
+      h("select",{id:"edAssignee", onchange:e=>d.assignee=e.target.value},
+        h("option",{value:"", selected:!d.assignee},"Anyone on this shift"),
+        assignees.map(s=>h("option",{value:s.id, selected:d.assignee===s.id}, s.name)))),
+    scheduleFields(d, "ed"),
+    h("div",{class:"inline full"},
+      h("button",{type:"submit", class:"btn small"},"Save"),
+      h("button",{type:"button", class:"btn ghost small", onclick:()=>{ S.editTask = null; render(); }},"Cancel")));
+}
+
 function taskRow(t, role){
-  const done = isDone(t), m = me();
-  const canRemove = canWrite() && (isAdmin() || (t.added_by && t.added_by===m.id));
+  if (S.editTask===t.id && S.editDraft) return h("div",{class:"task editing"}, editTaskForm(t, role));
+  const done = isDone(t), over = isOverdue(t), due = dueLine(t), editable = canEditTask(t);
   const ck = "task:"+t.id;
-  return h("div",{class:"task"+(done?" done":"")},
+  return h("div",{class:"task"+(done?" done":"")+(over?" overdue":"")},
     h("button",{type:"button", class:"check", "aria-pressed":done?"true":"false", "aria-label":(done?"Uncheck ":"Check off ")+t.text, disabled:!canWrite(), onclick:()=>toggleTask(t)}, h("span",{}, svgCheck())),
     h("div",{style:"min-width:0"},
       h("div",{class:"text", text:t.text}),
       h("div",{class:"tmeta"},
         h("div",{class:"line"},
-          h("span",{class:"tag plain", text:t.repeat==="daily"?"Daily":"One-time"}),
+          h("span",{class:"tag plain", text:repeatLabel(t)}),
           t.assignee ? h("span",{class:"tag "+role.section, text:"For "+staffName(t.assignee)}) : null,
-          h("span",{text:"Added by "+addedName(t)+" · "+when(t.added_at)})),
+          due ? h("span",{class:"due-line "+due.cls, text:due.text}) : null),
         done ? h("div",{class:"line ok", text:"✓ Done by "+doneName(t)+" · "+when(t.done_at)}) : null,
-        canRemove ? h("div",{class:"line"},
+        h("div",{class:"line"}, h("span",{text:"Added by "+addedName(t)+" · "+when(t.added_at)})),
+        editable ? h("div",{class:"line"},
+          h("button",{type:"button", class:"linkbtn", onclick:()=>{ S.editTask = t.id; S.editDraft = {text:t.text, assignee:t.assignee||"", repeat:t.repeat, due_date:t.due_date||"", due_time:hhmm(t.due_time)}; S.confirm = null; render(); $("edText")?.focus(); }},"Edit"),
           S.confirm===ck ? h("button",{type:"button", class:"linkbtn warn", onclick:async ()=>{ S.confirm=null; await act("api_remove_task",{p_id:t.id},"Task removed"); }},"Tap again to remove")
                          : h("button",{type:"button", class:"linkbtn", onclick:()=>askConfirm(ck)},"Remove")) : null)));
 }
@@ -396,44 +500,54 @@ function viewRole(){
   const role = roleById(S.roleId);
   if (!role){ S.view="overview"; return viewOverview(); }
   const people = roleStaff(role.id);
-  let tasks = roleTasks(role.id);
-  const p = progressOf(tasks);
+  const allTasks = roleTasks(role.id);
+  let tasks = allTasks;
+  const p = progressOf(allTasks.filter(countsToday));
   if (S.filter==="everyone") tasks = tasks.filter(t=>!t.assignee);
   else if (S.filter!=="all") tasks = tasks.filter(t=>t.assignee===S.filter || !t.assignee);
-  const todo = tasks.filter(t=>!isDone(t)), done = tasks.filter(isDone);
+  const byDue = (a,b)=>(taskDeadline(a)||0)-(taskDeadline(b)||0);
+  const now = tasks.filter(t=>bucket(t)==="now").sort((a,b)=>Number(isOverdue(b))-Number(isOverdue(a)) || (a.repeat==="daily")-(b.repeat==="daily"));
+  const later = tasks.filter(t=>bucket(t)==="later").sort(byDue);
+  const done = tasks.filter(t=>bucket(t)==="done");
+  const overCount = allTasks.filter(isOverdue).length;
   const out = [];
   out.push(h("div",{class:"rolehead"},
     h("button",{type:"button", class:"back", onclick:()=>go("overview")},"← All roles"),
     h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:role.name, style:"font-size:32px"}), h("span",{class:"tag "+role.section, text:secInfo(role.section)[1]})),
-    h("div",{class:"meta"}, h("span",{text: p.total ? p.done+" of "+p.total+" done this shift" : "No tasks yet"}), p.total && p.done===p.total ? h("span",{class:"tag ok", text:"All done"}) : null),
+    h("div",{class:"meta"}, h("span",{text: p.total ? p.done+" of "+p.total+" done today" : allTasks.length ? "Nothing due today" : "No tasks yet"}),
+      p.total && p.done===p.total ? h("span",{class:"tag ok", text:"All done"}) : null,
+      overCount ? h("span",{class:"tag danger", text:overCount+" overdue"}) : null),
     p.total ? bar(p.pct) : null));
   if (people.length) out.push(h("div",{class:"chips", role:"group", "aria-label":"Show tasks for"},
     [["all","Everyone's tasks"],["everyone","Shared only"], ...people.map(s=>[s.id, s.name])].map(([id,label])=>
       h("button",{type:"button", class:"chip", "aria-pressed":S.filter===id?"true":"false", onclick:()=>{ S.filter=id; render(); }}, label))));
-  if (!p.total){
+  if (!allTasks.length){
     const starter = STARTERS[role.id] && isAdmin() && canWrite();
     out.push(emptyCard("Nothing on this list yet",
       starter ? "Add tasks one at a time below, or start from a typical "+role.name.toLowerCase()+" list and edit it." : "Add the first task below.",
       starter ? h("button",{type:"button", class:"btn ghost", onclick:()=>act("api_add_starter_tasks",{p_role_id:role.id, p_texts:STARTERS[role.id]},"Starter list added. Edit it however you like.")},"Use a starter list") : null));
   } else {
     out.push(h("div",{class:"list"},
-      todo.map(t=>taskRow(t, role)),
+      now.length ? h("div",{class:"divider first", text:"To do · "+now.length}) : null,
+      now.map(t=>taskRow(t, role)),
+      later.length ? h("div",{class:"divider", text:"Coming up · "+later.length}) : null,
+      later.map(t=>taskRow(t, role)),
       done.length ? h("div",{class:"divider", text:"Done · "+done.length}) : null,
       done.map(t=>taskRow(t, role)),
       !tasks.length ? h("div",{class:"task"}, h("span"), h("span",{class:"hint", text:"No tasks match this filter."})) : null));
   }
   const assignees = (people.length ? people : D().staff).slice().sort((a,b)=>a.name.localeCompare(b.name));
-  out.push(h("form",{class:"add", onsubmit:async e=>{ e.preventDefault(); const d = S.draft; if (!d.text.trim()) return;
-      if (await act("api_add_task",{p_role_id:role.id, p_text:d.text, p_assignee:d.assignee||null, p_repeat:d.repeat})){ S.draft = {...d, text:""}; render(); $("newTask")?.focus(); } }},
-    h("label",{class:"lbl full", for:"newTask"}, "New task", h("input",{type:"text", id:"newTask", placeholder:"e.g. Restock the well liquor", value:S.draft.text, oninput:e=>S.draft.text=e.target.value})),
-    h("label",{class:"lbl", for:"newAssignee"}, "For",
-      h("select",{id:"newAssignee", onchange:e=>S.draft.assignee=e.target.value},
-        h("option",{value:"", selected:!S.draft.assignee},"Anyone on this shift"),
-        assignees.map(s=>h("option",{value:s.id, selected:S.draft.assignee===s.id}, s.name)))),
-    h("label",{class:"lbl", for:"newRepeat"}, "Repeats",
-      h("select",{id:"newRepeat", onchange:e=>S.draft.repeat=e.target.value},
-        h("option",{value:"daily", selected:S.draft.repeat==="daily"},"Every shift"),
-        h("option",{value:"once", selected:S.draft.repeat==="once"},"Just once"))),
+  const d = S.draft;
+  out.push(h("form",{class:"add", onsubmit:async e=>{ e.preventDefault(); if (!d.text.trim()) return;
+      if (RECURRING.has(d.repeat) && !d.due_date) return toast("Pick the first due date.");
+      if (await act("api_add_task",{p_role_id:role.id, p_text:d.text, p_assignee:d.assignee||null, p_repeat:d.repeat, p_due_date:d.repeat==="daily" ? null : (d.due_date||null), p_due_time:d.due_time||null})){
+        S.draft = {...d, text:"", due_time:"", due_date: RECURRING.has(d.repeat) ? shiftDay() : ""}; render(); $("newTask")?.focus(); } }},
+    h("label",{class:"lbl full", for:"newTask"}, "New task", h("input",{type:"text", id:"newTask", placeholder:"e.g. Clean the beer lines", value:d.text, oninput:e=>d.text=e.target.value})),
+    h("label",{class:"lbl full", for:"newAssignee"}, "For",
+      h("select",{id:"newAssignee", onchange:e=>d.assignee=e.target.value},
+        h("option",{value:"", selected:!d.assignee},"Anyone on this shift"),
+        assignees.map(s=>h("option",{value:s.id, selected:d.assignee===s.id}, s.name)))),
+    scheduleFields(d, "new"),
     h("button",{type:"submit", class:"btn full", disabled:!canWrite()},"Add task")));
   return out;
 }
