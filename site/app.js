@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 13;
+const APP_VERSION = 14;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -693,6 +693,19 @@ const SOUNDS = {
     [784,988,1319].forEach((f,i)=>{ tone(ctx,d,t+i*.09,{freq:f,type:"triangle",gain:.18,dur:.38}); tone(ctx,d,t+i*.09,{freq:f*2,gain:.05,dur:.25}); });
     SOUNDS.clink(ctx, d, t+.3);
   },
+  /* intro: a light woosh that rises with the pour (noise swept up through a filter) */
+  woosh(ctx, d, t, len){
+    len = len || .9;
+    const n = Math.ceil(ctx.sampleRate*len), buf = ctx.createBuffer(1, n, ctx.sampleRate), ch = buf.getChannelData(0);
+    for (let i=0;i<n;i++) ch[i] = Math.random()*2 - 1;
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.Q.value = .8;
+    bp.frequency.setValueAtTime(260, t); bp.frequency.exponentialRampToValueAtTime(2400, t+len*.72); bp.frequency.exponentialRampToValueAtTime(1500, t+len);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.28, t+len*.6); g.gain.exponentialRampToValueAtTime(.0001, t+len);
+    src.connect(bp); bp.connect(g); g.connect(d); src.start(t); src.stop(t+len+.02);
+  },
+  wooshQuick(ctx, d, t){ SOUNDS.woosh(ctx, d, t, .45); },
   /* any other button: a short, soft wooden tap */
   tap(ctx, d, t){ tone(ctx,d,t,{freq:760,to:540,type:"sine",gain:.11,dur:.032,attack:.002}); tone(ctx,d,t,{freq:2300,type:"sine",gain:.025,dur:.012,attack:.001}); },
   /* unchecking: a soft falling tock */
@@ -1313,9 +1326,21 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
   if (document.documentElement.classList.contains("no-intro")){ el.remove(); return; }
   try { sessionStorage.setItem("brewskis.intro", "1"); } catch(e){}
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const start = performance.now();
+  let wooshed = false;
+  /* the woosh only plays where the phone allows sound before the first tap (Android, installed app).
+     iPhones never do, so there it plays if you tap to skip the intro instead. */
+  if (soundOn && !reduce){
+    const ctx = audio();
+    if (ctx) ctx.resume().then(()=>{
+      if (ctx.state!=="running" || el.classList.contains("out") || wooshed) return;
+      wooshed = true;
+      SOUNDS.woosh(ctx, ctx.destination, ctx.currentTime + Math.max(0, .55 - (performance.now()-start)/1000), .9);
+    }).catch(()=>{});
+  }
   const done = () => { if (!el.isConnected || el.classList.contains("out")) return; el.classList.add("out"); setTimeout(()=>el.remove(), 350); };
   setTimeout(done, reduce ? 700 : 1650);
-  el.addEventListener("click", done);
+  el.addEventListener("click", ()=>{ if (!wooshed && !el.classList.contains("out")){ wooshed = true; play("wooshQuick"); } done(); });
 })();
 
 (function boot(){
