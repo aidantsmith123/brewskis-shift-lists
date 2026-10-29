@@ -17,8 +17,17 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="styles.css">
+<!-- the intro plays once each time the app is opened, not on refreshes or updates -->
+<script>try{if(sessionStorage.getItem("brewskis.intro"))document.documentElement.classList.add("no-intro")}catch(e){}</script>
 </head>
 <body>
+<div id="intro" class="intro" aria-hidden="true">
+  <div class="intro-pour"></div>
+  <div class="intro-center">
+    <div class="logo intro-logo"></div>
+    <div class="intro-title">Shift Lists</div>
+  </div>
+</div>
 <header class="band">
   <div class="wrap top">
     <div class="brand">

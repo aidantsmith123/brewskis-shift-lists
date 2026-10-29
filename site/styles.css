@@ -372,3 +372,32 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .switch:checked{background:var(--done)}
 .switch:checked::after{transform:translateX(20px)}
 @media (prefers-reduced-motion:reduce){.switch,.switch::after{transition:none}}
+
+/* v12: intro. The barrel's staves, the logo drops in, and a pint pours up the screen before it lifts away. */
+.intro{position:fixed;inset:0;z-index:100;display:grid;place-items:center;overflow:hidden;cursor:pointer;
+  background:repeating-linear-gradient(90deg, rgba(0,0,0,.28) 0 2px, rgba(255,255,255,.05) 2px 3px, transparent 3px 64px),
+             linear-gradient(180deg,#7a4823 0%,#4a2a12 55%,#2a170b 100%);
+  animation:introFailsafe .3s 2.6s forwards}          /* never stays up, even if the app's script is slow */
+.no-intro .intro{display:none}
+.intro.out{animation:introOut .32s ease-in forwards}
+@keyframes introOut{to{opacity:0;visibility:hidden}}
+@keyframes introFailsafe{to{opacity:0;visibility:hidden;pointer-events:none}}
+.intro-center{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:10px;padding:24px}
+.intro-logo{width:min(66vw,320px);filter:drop-shadow(0 8px 18px rgba(0,0,0,.5))}
+.intro-title{font-family:var(--display);font-weight:800;font-size:46px;line-height:1;text-transform:uppercase;letter-spacing:.03em;
+  color:#fff;-webkit-text-stroke:7px #1f4fd1;paint-order:stroke fill;text-shadow:0 4px 0 rgba(0,0,0,.35)}
+.intro-pour{position:absolute;left:0;right:0;bottom:-26px;height:0;z-index:1;
+  background:radial-gradient(circle at 20% 70%,rgba(255,255,255,.35) 0 3px,transparent 4px) 0 0/90px 120px,
+             radial-gradient(circle at 70% 30%,rgba(255,255,255,.3) 0 2px,transparent 3px) 0 0/70px 90px,
+             linear-gradient(180deg,#ffd666,#f0b429 35%,#c98a12)}
+.intro-pour::before{content:"";position:absolute;left:-10px;right:-10px;top:-22px;height:30px;
+  background:radial-gradient(circle at 18px 18px,#fffaf0 0 14px,transparent 15px) 0 0/36px 30px repeat-x,
+             linear-gradient(#fffaf0,#fffaf0) 0 16px/100% 14px no-repeat}
+@media (prefers-reduced-motion: no-preference){
+  .intro-logo{animation:introDrop .55s cubic-bezier(.25,1.5,.45,1) both}
+  .intro-title{animation:introRise .4s .22s ease-out both}
+  .intro-pour{animation:introPour .75s .62s cubic-bezier(.45,0,.2,1) forwards}
+  @keyframes introDrop{from{opacity:0;transform:translateY(-28px) scale(.82)}to{opacity:1;transform:none}}
+  @keyframes introRise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  @keyframes introPour{to{height:125%}}
+}

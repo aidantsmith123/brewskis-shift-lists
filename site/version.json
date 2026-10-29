@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 12,
   "date": "2026-10-29",
-  "notes": "Tapping quickly no longer zooms the screen in."
+  "notes": "A short intro when the app opens."
 }

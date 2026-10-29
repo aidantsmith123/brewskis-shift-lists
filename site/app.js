@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 11;
+const APP_VERSION = 12;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -1298,6 +1298,17 @@ setInterval(()=>{ if (!document.hidden && !(document.activeElement && document.a
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
 }
+
+/* intro: about a second and a half on opening the app; tap to skip */
+(function intro(){
+  const el = $("intro"); if (!el) return;
+  if (document.documentElement.classList.contains("no-intro")){ el.remove(); return; }
+  try { sessionStorage.setItem("brewskis.intro", "1"); } catch(e){}
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const done = () => { if (!el.isConnected || el.classList.contains("out")) return; el.classList.add("out"); setTimeout(()=>el.remove(), 350); };
+  setTimeout(done, reduce ? 700 : 1650);
+  el.addEventListener("click", done);
+})();
 
 (function boot(){
   S.session = loadSession();
