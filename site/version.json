@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 11,
   "date": "2026-10-29",
-  "notes": "Sound effects: a clink when you check off a task, ticks when counting. Turn them off by tapping your name."
+  "notes": "Tapping quickly no longer zooms the screen in."
 }
