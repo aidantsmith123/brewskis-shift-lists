@@ -289,3 +289,26 @@ h2.sec-foh{color:var(--foh)} h2.sec-boh{color:var(--boh)} h2.sec-mgmt{color:var(
 .vsummary.behind{background:var(--warn-soft)}
 .devices{display:flex;flex-direction:column;gap:4px}
 .dev{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+/* v8: sections that open and close, inventory search */
+.fold{display:flex;flex-direction:column;gap:10px}
+.fold-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;width:100%;text-align:left;
+  background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--ink)}
+.fold-head:hover:not(:disabled){border-color:var(--blue)}
+.fold-head:disabled{cursor:default;opacity:1}
+.fold-head h2{font-size:22px;flex:0 0 auto;max-width:calc(100% - 34px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fold-head .tag{margin-left:auto}
+.chev{width:12px;height:12px;border-right:3px solid var(--blue);border-bottom:3px solid var(--blue);transform:rotate(-45deg);transition:transform .15s;margin:0 4px 0 2px}
+.fold.open .chev{transform:rotate(45deg) translate(-2px,-2px)}
+.fold.forced .chev{border-color:var(--muted)}
+.fold-body{padding-left:2px}
+@media (prefers-reduced-motion:reduce){.chev{transition:none}}
+.invtools{display:flex;flex-direction:column;gap:10px}
+.searchbox{position:relative}
+.searchbox input[type=search]{padding-left:40px;padding-right:40px;border-radius:12px;background:var(--card)
+  url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238891ad' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M15.5 15.5 21 21'/%3E%3C/svg%3E") no-repeat 13px center/18px}
+.searchbox input[type=search]::-webkit-search-cancel-button{display:none}
+.clearsearch{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px;height:32px;border:0;border-radius:50%;background:var(--soft);color:var(--muted);font-size:20px;line-height:1}
+.empty-search{padding:8px 2px}
+/* keep the phone's status bar area solid when the page scrolls under it */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);background:#2a170b;z-index:40}

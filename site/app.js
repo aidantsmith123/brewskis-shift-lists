@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 7;
+const APP_VERSION = 8;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -33,6 +33,7 @@ const S = {
   newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
+  invQuery:"", open:loadOpen(),
   latest:null, versions:null, versionsAt:0, helloAt:0, updating:false,
   installEvent:null, push:{loaded:false, sub:null, prefs:null, busy:false, err:""}
 };
@@ -95,6 +96,33 @@ async function refresh(){
   S.booting = false;
   render();
 }
+/* ---------- sections that open and close (remembered on this phone) ---------- */
+function loadOpen(){ try { return JSON.parse(localStorage.getItem("brewskis.open") || "{}") || {}; } catch(e){ return {}; } }
+function isOpen(key, byDefault){ return key in S.open ? !!S.open[key] : byDefault; }
+function toggleOpen(key, byDefault){
+  S.open[key] = !isOpen(key, byDefault);
+  try { localStorage.setItem("brewskis.open", JSON.stringify(S.open)); } catch(e){}
+  render();
+}
+/* a section with a tappable header; `forced` keeps it open while a search or filter is showing matches */
+function fold(key, byDefault, title, badge, body, opts={}){
+  const open = opts.forced || isOpen(key, byDefault);
+  const id = "fold-" + key.replace(/[^A-Za-z0-9]/g, "-");
+  return h("section",{class:"fold"+(open?" open":"")+(opts.forced?" forced":"")},
+    h("button",{type:"button", class:"fold-head", id:id+"-head", "aria-expanded":String(open), "aria-controls":id, disabled:!!opts.forced,
+        onclick:()=>toggleOpen(key, byDefault)},
+      h("span",{class:"chev", "aria-hidden":"true"}),
+      h("h2",{class:opts.titleClass||"", text:title}),
+      badge || null),
+    open ? h("div",{class:"fold-body stack", id}, body) : null);
+}
+/* does an item match the inventory search? every word has to appear in its name or unit */
+function matchesQuery(it, q){
+  if (!q) return true;
+  const hay = (it.name+" "+(it.unit||"")).toLowerCase();
+  return q.split(/\s+/).every(w=>hay.includes(w));
+}
+
 /* ---------- app versions ---------- */
 function deviceId(){
   try {
@@ -179,7 +207,7 @@ function h(tag, props, ...kids){
     else if (k==="value"||k==="checked"||k==="disabled"||k==="selected") el[k] = v;
     else el.setAttribute(k, v===true ? "" : v);
   }
-  for (const c of kids.flat()){ if (c==null||c===false) continue; el.append(c.nodeType ? c : document.createTextNode(String(c))); }
+  for (const c of kids.flat(Infinity)){ if (c==null||c===false) continue; el.append(c.nodeType ? c : document.createTextNode(String(c))); }
   return el;
 }
 const $ = id => document.getElementById(id);
@@ -933,9 +961,10 @@ function viewInventory(){
       : emptyCard("No inventory lists yet", "A manager needs to set up the inventory lists first."));
     return out;
   }
+
+  /* suppliers: order deadlines (count mode) or supplier settings (edit mode) */
   if (S.invEdit){
-    out.push(h("section",{class:"stack"},
-      h("div",{class:"sec-head"}, h("h2",{text:"Suppliers & deadlines"})),
+    out.push(fold("suppliers-edit", true, "Suppliers & deadlines", h("span",{class:"tag plain", text:d.suppliers.length+(d.suppliers.length===1?" supplier":" suppliers")}), [
       d.suppliers.map(supplierEditCard),
       h("form",{class:"add", onsubmit:async e=>{ e.preventDefault(); const n = S.newSup; if (!n.name.trim()) return;
           if (await act("api_save_supplier",{p_id:null, p_name:n.name, p_days:[...n.days].sort(), p_cutoff:n.cutoff, p_notes:n.notes,
@@ -944,45 +973,69 @@ function viewInventory(){
         h("label",{class:"lbl full", for:"nsName"}, "New supplier", h("input",{type:"text", id:"nsName", placeholder:"e.g. Restaurant Depot", value:S.newSup.name, oninput:e=>S.newSup.name=e.target.value})),
         supScheduleFields(S.newSup, patch=>{ Object.assign(S.newSup, patch); render(); }, "ns"),
         h("label",{class:"lbl full", for:"nsNotes"}, "Notes", h("input",{type:"text", id:"nsNotes", placeholder:"Rep, phone", value:S.newSup.notes, oninput:e=>S.newSup.notes=e.target.value})),
-        h("button",{type:"submit", class:"btn full"},"Add supplier"))));
-  } else {
-    if (admin){
-      const sec = h("section",{class:"stack"}, h("div",{class:"sec-head"}, h("h2",{text:"Order deadlines"}), h("span",{class:"tag mgmt", text:"Managers only"})));
-      if (!d.suppliers.length) sec.append(h("p",{class:"hint", text:"Add your suppliers and their order schedules under Edit lists & pars. Each one gets a countdown and an order list built from your counts."}));
-      else for (const {s, d:dl} of suppliersByDeadline()) sec.append(supplierOrderCard(s, dl));
-      const loose = belowPar(null).filter(it=>!supplierById(it.supplier_id));
-      if (loose.length) sec.append(h("div",{class:"card"},
-        h("div",{class:"row"}, h("h3",{text:"No supplier set"}), h("span",{class:"tag warn", text:loose.length+" to order"})),
-        h("ul",{class:"orderlines"}, loose.map(it=>h("li",{}, h("span",{text:it.name}), h("span",{class:"q", text:fmtN(needOf(it))+(it.unit?" "+it.unit:"")})))),
-        h("div",{class:"inline"}, h("button",{type:"button", class:"btn ghost small", onclick:()=>sendOrder("Supply", loose)}, navigator.share ? "Send list" : "Copy list"))));
-      out.push(sec);
-    }
-    out.push(h("div",{class:"chips", role:"group", "aria-label":"Show items"},
-      [["all","All items"],["low","Needs ordering"],["uncounted","Not counted"]].map(([id,label])=>
-        h("button",{type:"button", class:"chip", "aria-pressed":S.invFilter===id?"true":"false", onclick:()=>{ S.invFilter=id; render(); }}, label))));
+        h("button",{type:"submit", class:"btn full"},"Add supplier"))]));
+  } else if (admin){
+    const rows = suppliersByDeadline();
+    const toPlace = rows.filter(x=>!x.ordered && belowPar(x.s.id).length).length;
+    const loose = belowPar(null).filter(it=>!supplierById(it.supplier_id));
+    const next = rows.find(x=>x.d && !x.ordered);
+    const badge = toPlace ? h("span",{class:"tag warn", text:toPlace+(toPlace===1?" order to place":" orders to place")})
+                : next ? h("span",{class:"tag plain", text:"Next: "+next.s.name.split(" ")[0]+" "+next.d.toLocaleDateString(undefined,{weekday:"short"})})
+                : h("span",{class:"tag ok", text:"All caught up"});
+    const body = [h("p",{class:"hint", text:"Only managers see this section."})];
+    if (!d.suppliers.length) body.push(h("p",{class:"hint", text:"Add your suppliers and their order schedules under Edit lists & pars. Each one gets a countdown and an order list built from your counts."}));
+    else for (const {s, d:dl} of rows) body.push(supplierOrderCard(s, dl));
+    if (loose.length) body.push(h("div",{class:"card"},
+      h("div",{class:"row"}, h("h3",{text:"No supplier set"}), h("span",{class:"tag warn", text:loose.length+" to order"})),
+      h("ul",{class:"orderlines"}, loose.map(it=>h("li",{}, h("span",{text:it.name}), h("span",{class:"q", text:fmtN(needOf(it))+(it.unit?" "+it.unit:"")})))),
+      h("div",{class:"inline"}, h("button",{type:"button", class:"btn ghost small", onclick:()=>sendOrder("Supply", loose)}, navigator.share ? "Send list" : "Copy list"))));
+    out.push(fold("orders", true, "Order deadlines", badge, body));
   }
+
+  /* search and filters */
+  const q = S.invQuery.trim().toLowerCase();
+  const filter = S.invEdit ? "all" : S.invFilter;
+  out.push(h("div",{class:"invtools"},
+    h("div",{class:"searchbox"},
+      h("input",{type:"search", id:"invSearch", placeholder:"Search items", "aria-label":"Search inventory items", autocomplete:"off", enterkeyhint:"search",
+        value:S.invQuery, oninput:e=>{ S.invQuery = e.target.value; render(); }}),
+      S.invQuery ? h("button",{type:"button", class:"clearsearch", "aria-label":"Clear search", onclick:()=>{ S.invQuery = ""; render(); $("invSearch")?.focus(); }},"×") : null),
+    S.invEdit ? null : h("div",{class:"chips", role:"group", "aria-label":"Show items"},
+      [["all","All items"],["low","Needs ordering"],["uncounted","Not counted"]].map(([id,label])=>
+        h("button",{type:"button", class:"chip", "aria-pressed":S.invFilter===id?"true":"false", onclick:()=>{ S.invFilter=id; render(); }}, label)))));
+
+  /* the lists */
+  const narrowing = !!q || filter!=="all";
+  let shownLists = 0;
   for (const cat of d.invcats){
-    let items = catItems(cat.id);
-    const low = items.filter(it=>(needOf(it)||0)>0).length, total = items.length;
-    if (!S.invEdit && S.invFilter==="low") items = items.filter(it=>(needOf(it)||0)>0);
-    if (!S.invEdit && S.invFilter==="uncounted") items = items.filter(it=>onHandOf(it)==null);
-    const ck = "cat:"+cat.id;
-    const sec = h("section",{class:"stack"},
-      h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:cat.name}), h("span",{class:"tag "+(low?"warn":"plain"), text: low ? low+" below par" : total+" items"})));
+    const all = catItems(cat.id);
+    let items = all.filter(it=>matchesQuery(it, q));
+    if (filter==="low") items = items.filter(it=>(needOf(it)||0)>0);
+    if (filter==="uncounted") items = items.filter(it=>onHandOf(it)==null);
+    if (narrowing && !items.length) continue;          // hide lists with nothing to show
+    shownLists++;
+    const low = all.filter(it=>(needOf(it)||0)>0).length, total = all.length;
+    const badge = narrowing ? h("span",{class:"tag plain", text:items.length+(items.length===1?" match":" matches")})
+                : low ? h("span",{class:"tag warn", text:low+" below par"})
+                : h("span",{class:"tag plain", text:total+(total===1?" item":" items")});
+    const ck = "cat:"+cat.id, body = [];
     if (!total){
       const starter = INV_STARTERS[cat.id] && admin && canWrite();
-      sec.append(emptyCard("Nothing on this list yet", starter ? "Add items one by one, or start with common "+cat.name.toLowerCase()+" and set your own pars." : admin ? "Add the first item below." : "A manager needs to add items to this list.",
+      body.push(emptyCard("Nothing on this list yet", starter ? "Add items one by one, or start with common "+cat.name.toLowerCase()+" and set your own pars." : admin ? "Add the first item below." : "A manager needs to add items to this list.",
         starter ? h("button",{type:"button", class:"btn ghost", onclick:async ()=>{ if (await act("api_add_items",{p_cat_id:cat.id, p_items:INV_STARTERS[cat.id].map(([name,unit])=>({name, unit}))},"Starter items added. Set a par for each one.")){ S.invEdit = true; render(); } }},"Use a starter list") : null));
-    } else if (S.invEdit) sec.append(h("div",{class:"list"}, catItems(cat.id).map(itemEditRow)));
-    else sec.append(items.length ? h("div",{class:"list"}, items.map(itemRow)) : h("p",{class:"hint", text:"Nothing matches this filter."}));
-    if (S.invEdit){
-      sec.append(addItemForm(cat));
-      sec.append(h("div",{}, S.confirm===ck ? h("button",{type:"button", class:"linkbtn warn", onclick:()=>{ S.confirm=null; act("api_remove_category",{p_id:cat.id}, cat.name+" removed"); }},"Tap again: removes "+cat.name+" and its "+total+" items")
+    } else body.push(h("div",{class:"list"}, items.map(S.invEdit ? itemEditRow : itemRow)));
+    if (S.invEdit && !narrowing){
+      body.push(addItemForm(cat));
+      body.push(h("div",{}, S.confirm===ck ? h("button",{type:"button", class:"linkbtn warn", onclick:()=>{ S.confirm=null; act("api_remove_category",{p_id:cat.id}, cat.name+" removed"); }},"Tap again: removes "+cat.name+" and its "+total+" items")
                                          : h("button",{type:"button", class:"linkbtn", onclick:()=>askConfirm(ck)},"Remove the "+cat.name+" list")));
     }
-    out.push(sec);
+    out.push(fold("list:"+cat.id, false, cat.name, badge, body, {forced:narrowing}));
   }
-  if (S.invEdit){
+  if (narrowing && !shownLists){
+    out.push(h("p",{class:"hint empty-search", text: q ? "No items match “"+S.invQuery.trim()+"”"+(filter==="low" ? " that need ordering." : filter==="uncounted" ? " that still need counting." : ".")
+                                                     : filter==="low" ? "Nothing needs ordering right now." : "Everything has been counted."}));
+  }
+  if (S.invEdit && !narrowing){
     out.push(h("form",{class:"inline", onsubmit:async e=>{ e.preventDefault(); if (await act("api_add_category",{p_name:S.newCat})){ S.newCat=""; render(); } }},
       h("input",{type:"text", id:"newCat", placeholder:"New list, e.g. Cleaning supplies", "aria-label":"New list name", value:S.newCat, oninput:e=>S.newCat=e.target.value}),
       h("button",{type:"submit", class:"btn"},"Add list")));
