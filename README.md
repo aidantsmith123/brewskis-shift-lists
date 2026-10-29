@@ -68,4 +68,7 @@ Log in with your number, open the **Team** tab, and tap **Assign number** for To
 
 ## Making changes later
 
+Database updates live in `supabase/migrations/`. A new database's `schema.sql` already includes them; an existing database needs each new migration run once in the SQL Editor before the matching app update is published.
+
+
 Edit the files in `site/`, then change `VERSION` at the top of `site/sw.js` (for example `brewskis-v2`) so installed copies pick up the update, and push. Phones get the new version the next time the app is opened twice.
