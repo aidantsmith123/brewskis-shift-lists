@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 16;
+const APP_VERSION = 17;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -401,7 +401,10 @@ function dueText(d){
   const rel = ms < 3600e3 ? Math.max(1, Math.round(ms/60000))+" min" : ms < 48*3600e3 ? Math.round(ms/3600e3)+" h" : Math.round(ms/86400e3)+" days";
   return day+" "+t+" · in "+rel;
 }
-const belowPar = supId => D().items.filter(it=>(supId===undefined || (it.supplier_id||null)===supId) && (needOf(it)||0)>0);
+/* where an item is ordered from: its own supplier, or else its list's default supplier */
+const catById = id => D().invcats.find(c=>c.id===id);
+const supplierOf = it => it.supplier_id || (catById(it.cat_id)||{}).supplier_id || null;
+const belowPar = supId => D().items.filter(it=>(supId===undefined || supplierOf(it)===supId) && (needOf(it)||0)>0);
 const suppliersByDeadline = () => D().suppliers.map(s=>({s, d:nextDeadline(s), ordered:orderedThisRound(s)})).sort((a,b)=>Number(a.ordered)-Number(b.ordered)||(a.d?a.d.getTime():Infinity)-(b.d?b.d.getTime():Infinity)||a.s.name.localeCompare(b.s.name));
 
 let toastTimer;
@@ -989,7 +992,7 @@ function viewRole(){
 
 /* ---------- Inventory ---------- */
 function itemRow(it){
-  const st = statusOf(it), c = countOf(it.id), oh = onHandOf(it), sup = supplierById(it.supplier_id);
+  const st = statusOf(it), c = countOf(it.id), oh = onHandOf(it), sup = supplierById(supplierOf(it));
   return h("div",{class:"item"},
     h("div",{style:"min-width:0"},
       h("div",{class:"iname", text:it.name}),
@@ -1010,6 +1013,23 @@ function updateItem(it, patch){
   const n = {name:it.name, unit:it.unit, par:parOf(it), supplier_id:it.supplier_id};
   return act("api_update_item",{p_id:it.id, p_name:n.name, p_unit:n.unit||"", p_par:n.par, p_supplier_id:n.supplier_id||null});
 }
+function listDefaultLabel(catId){
+  const sup = supplierById((catById(catId)||{}).supplier_id);
+  return sup ? "List default ("+sup.name+")" : "No supplier";
+}
+/* edit mode, top of each list: who this list is ordered from by default */
+function listSupplierPicker(cat){
+  const own = D().items.filter(it=>it.cat_id===cat.id && it.supplier_id).length;
+  return h("div",{class:"listsup"},
+    h("label",{class:"lbl", for:"lsup-"+cat.id}, "Default supplier for "+cat.name,
+      h("select",{id:"lsup-"+cat.id, onchange:async e=>{ const v = e.target.value || null; cat.supplier_id = v;
+          if (await act("api_set_category_supplier",{p_cat_id:cat.id, p_supplier_id:v}, v ? cat.name+" now orders from "+supplierById(v).name : "Default supplier removed")) render(); }},
+        h("option",{value:"", selected:!cat.supplier_id},"None"),
+        D().suppliers.map(s=>h("option",{value:s.id, selected:cat.supplier_id===s.id}, s.name)))),
+    h("p",{class:"hint", text: cat.supplier_id
+      ? "Every item here goes on "+(supplierById(cat.supplier_id)||{}).name+"'s order"+(own ? ", except "+own+(own===1?" item":" items")+" set to a different supplier." : ".")
+      : "Pick one to send every item in this list to the same supplier. You can still change single items below."}));
+}
 function itemEditRow(it){
   const ck = "item:"+it.id;
   return h("div",{class:"item edit"},
@@ -1018,7 +1038,7 @@ function itemEditRow(it){
     h("label",{class:"lbl", for:"ep-"+it.id}, "Par", h("input",{type:"number", id:"ep-"+it.id, inputmode:"decimal", min:"0", step:"any", value:parOf(it)==null?"":String(parOf(it)), placeholder:"Set", onchange:e=>{ const v=e.target.value===""?null:Number(e.target.value); updateItem(it,{par:Number.isFinite(v)?v:null}); }})),
     h("label",{class:"lbl wide", for:"es-"+it.id}, "Supplier",
       h("select",{id:"es-"+it.id, onchange:e=>updateItem(it,{supplier_id:e.target.value||null})},
-        h("option",{value:"", selected:!it.supplier_id},"No supplier"),
+        h("option",{value:"", selected:!it.supplier_id}, listDefaultLabel(it.cat_id)),
         D().suppliers.map(s=>h("option",{value:s.id, selected:it.supplier_id===s.id}, s.name)))),
     h("div",{class:"wide", style:"grid-column:span 2;align-self:center"},
       S.confirm===ck ? h("button",{type:"button", class:"linkbtn warn", onclick:()=>{ S.confirm=null; act("api_remove_item",{p_id:it.id}, it.name+" removed"); }},"Tap again to remove "+it.name)
@@ -1033,7 +1053,7 @@ function addItemForm(cat){
     h("label",{class:"lbl", for:"np-"+cat.id}, "Par", h("input",{type:"number", id:"np-"+cat.id, inputmode:"decimal", min:"0", step:"any", value:d.par, oninput:e=>d.par=e.target.value})),
     h("label",{class:"lbl full", for:"nsu-"+cat.id}, "Supplier",
       h("select",{id:"nsu-"+cat.id, onchange:e=>d.supplier_id=e.target.value},
-        h("option",{value:"", selected:!d.supplier_id},"No supplier"),
+        h("option",{value:"", selected:!d.supplier_id}, listDefaultLabel(cat.id)),
         D().suppliers.map(s=>h("option",{value:s.id, selected:d.supplier_id===s.id}, s.name)))),
     h("button",{type:"submit", class:"btn full"},"Add item"));
 }
@@ -1117,7 +1137,7 @@ function viewInventory(){
   } else if (admin){
     const rows = suppliersByDeadline();
     const toPlace = rows.filter(x=>!x.ordered && belowPar(x.s.id).length).length;
-    const loose = belowPar(null).filter(it=>!supplierById(it.supplier_id));
+    const loose = belowPar(null).filter(it=>!supplierById(supplierOf(it)));
     const next = rows.find(x=>x.d && !x.ordered);
     const badge = toPlace ? h("span",{class:"tag warn", text:toPlace+(toPlace===1?" order to place":" orders to place")})
                 : next ? h("span",{class:"tag plain", text:"Next: "+next.s.name.split(" ")[0]+" "+next.d.toLocaleDateString(undefined,{weekday:"short"})})
@@ -1159,6 +1179,7 @@ function viewInventory(){
                 : low ? h("span",{class:"tag warn", text:low+" below par"})
                 : h("span",{class:"tag plain", text:total+(total===1?" item":" items")});
     const ck = "cat:"+cat.id, body = [];
+    if (S.invEdit && !narrowing) body.push(listSupplierPicker(cat));
     if (!total){
       const starter = INV_STARTERS[cat.id] && admin && canWrite();
       body.push(emptyCard("Nothing on this list yet", starter ? "Add items one by one, or start with common "+cat.name.toLowerCase()+" and set your own pars." : admin ? "Add the first item below." : "A manager needs to add items to this list.",

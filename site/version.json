@@ -1,5 +1,5 @@
 {
-  "version": 16,
+  "version": 17,
   "date": "2026-10-29",
-  "notes": "Front of house staff see front of house lists, back of house see back of house; managers see everything."
+  "notes": "Each inventory list can have a default supplier, like Liquor from PLCB."
 }

@@ -407,3 +407,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .brand > div:last-child{min-width:0}
 .brand h1{white-space:nowrap;font-size:clamp(24px,8.2vw,38px);-webkit-text-stroke-width:clamp(4px,1.4vw,6px)}
 .intro-center{gap:0}
+
+/* v17: default supplier per list */
+.listsup{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:12px;background:var(--soft)}
+.listsup select{background:var(--card)}

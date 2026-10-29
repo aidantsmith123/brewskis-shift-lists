@@ -236,7 +236,8 @@ begin
         'login_set_at', case when mgr then l.set_at end) order by s.name)
       from staff s left join logins l on l.staff_id = s.id), '[]'),
     'tasks', coalesce((select json_agg(t order by t.added_at, t.id) from tasks t), '[]'),
-    'invcats', coalesce((select json_agg(c order by c.sort, c.name) from invcats c), '[]'),
+    'invcats', coalesce((select json_agg(json_build_object('id', c.id, 'name', c.name, 'sort', c.sort,
+        'supplier_id', case when mgr then c.supplier_id end) order by c.sort, c.name) from invcats c), '[]'),
     'items', coalesce((select json_agg(json_build_object('id', i.id, 'cat_id', i.cat_id, 'name', i.name, 'unit', i.unit, 'par', i.par,
         'supplier_id', case when mgr then i.supplier_id end, 'added_at', i.added_at) order by i.added_at, i.name) from items i), '[]'),
     'counts', coalesce((select json_agg(c) from counts c), '[]'),
@@ -718,8 +719,8 @@ begin
         k := 'order:' || endpoint_key || ':' || sup.id || ':' || extract(epoch from nx)::bigint;
         insert into push_sent(key) values (k) on conflict do nothing; get diagnostics rc = row_count;
         continue when rc = 0;
-        select count(*) into n_low from items i join counts c on c.item_id = i.id
-         where i.supplier_id = sup.id and i.par is not null and c.on_hand < i.par;
+        select count(*) into n_low from items i join counts c on c.item_id = i.id join invcats ic on ic.id = i.cat_id
+         where coalesce(i.supplier_id, ic.supplier_id) = sup.id and i.par is not null and c.on_hand < i.par;
         out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
           'title', 'Order due: ' || sup.name,
           'body', 'Order by ' || _fmt_due(nx, p_now) || '. ' ||
@@ -903,6 +904,18 @@ begin
   return coalesce((select json_agg(json_build_object('staff_id', staff_id, 'device_id', device_id, 'version', version,
                                                      'platform', platform, 'seen_at', seen_at) order by seen_at desc)
                      from app_devices), '[]');
+end $$;
+
+-- ---------- default supplier for a whole list (added Oct 2026) ----------
+-- An item with no supplier of its own is ordered from its list's default supplier (e.g. Liquor -> PLCB).
+alter table invcats add column if not exists supplier_id text references suppliers(id) on delete set null;
+
+create or replace function api_set_category_supplier(p_token uuid, p_cat_id text, p_supplier_id text) returns void language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _mgr(p_token);
+begin
+  update invcats set supplier_id = (select id from suppliers where id = nullif(p_supplier_id,'')) where id = p_cat_id;
+  if not found then raise exception 'not_found'; end if;
 end $$;
 
 -- ---------- who may call what ----------
