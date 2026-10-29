@@ -411,3 +411,9 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 /* v17: default supplier per list */
 .listsup{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:12px;background:var(--soft)}
 .listsup select{background:var(--card)}
+
+/* v18: supplier filter, one scrolling row */
+.supchips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+.supchips::-webkit-scrollbar{display:none}
+.supchips .chip{flex:none}
+.supchips .chip[aria-pressed="true"]{background:var(--blue);border-color:var(--blue);color:var(--blue-ink)}

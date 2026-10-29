@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 17;
+const APP_VERSION = 18;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -33,7 +33,7 @@ const S = {
   newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
-  invQuery:"", open:loadOpen(), fx:{},
+  invQuery:"", invSup:null, open:loadOpen(), fx:{},
   latest:null, versions:null, versionsAt:0, helloAt:0, updating:false,
   installEvent:null, push:{loaded:false, sub:null, prefs:null, busy:false, err:""}
 };
@@ -1107,6 +1107,18 @@ function supplierOrderCard(s, d){
       items.length ? h("button",{type:"button", class:"btn ghost small", onclick:()=>sendOrder(s.name, items)}, navigator.share ? "Send order" : "Copy order") : null,
       canWrite() ? h("button",{type:"button", class:"btn small", "data-own-sound":"", onclick:async ()=>{ if (await act("api_mark_ordered",{p_id:s.id},"Marked as ordered")) play("ok"); }},"Mark order placed") : null) : null);
 }
+/* managers: narrow every list to one supplier (Origlio, Penn, Muller...) */
+const shortName = n => n.replace(/\s*\(.*?\)\s*/g," ").trim().split(/\s+/)[0];
+function supplierChips(){
+  if (!isAdmin()) return null;
+  const used = new Set(D().items.map(supplierOf).filter(Boolean));
+  const sups = D().suppliers.filter(s=>used.has(s.id)).sort((a,b)=>a.name.localeCompare(b.name));
+  if (!sups.length) return null;
+  if (S.invSup && !used.has(S.invSup)) S.invSup = null;
+  return h("div",{class:"chips supchips", role:"group", "aria-label":"Show items from supplier"},
+    h("button",{type:"button", class:"chip", "aria-pressed":!S.invSup?"true":"false", onclick:()=>{ S.invSup = null; render(); }},"All suppliers"),
+    sups.map(sp=>h("button",{type:"button", class:"chip", title:sp.name, "aria-pressed":S.invSup===sp.id?"true":"false", onclick:()=>{ S.invSup = S.invSup===sp.id ? null : sp.id; render(); }}, shortName(sp.name))));
+}
 function viewInventory(){
   const admin = isAdmin(), out = [], d = D();
   if (!admin) S.invEdit = false;
@@ -1162,16 +1174,19 @@ function viewInventory(){
       S.invQuery ? h("button",{type:"button", class:"clearsearch", "aria-label":"Clear search", onclick:()=>{ S.invQuery = ""; render(); $("invSearch")?.focus(); }},"×") : null),
     S.invEdit ? null : h("div",{class:"chips", role:"group", "aria-label":"Show items"},
       [["all","All items"],["low","Needs ordering"],["uncounted","Not counted"]].map(([id,label])=>
-        h("button",{type:"button", class:"chip", "aria-pressed":S.invFilter===id?"true":"false", onclick:()=>{ S.invFilter=id; render(); }}, label)))));
+        h("button",{type:"button", class:"chip", "aria-pressed":S.invFilter===id?"true":"false", onclick:()=>{ S.invFilter=id; render(); }}, label))),
+    supplierChips()));
 
   /* the lists */
-  const narrowing = !!q || filter!=="all";
+  const supSel = admin && S.invSup && supplierById(S.invSup) ? S.invSup : null;
+  const narrowing = !!q || filter!=="all" || !!supSel;
   let shownLists = 0;
   for (const cat of d.invcats){
     const all = catItems(cat.id);
     let items = all.filter(it=>matchesQuery(it, q));
     if (filter==="low") items = items.filter(it=>(needOf(it)||0)>0);
     if (filter==="uncounted") items = items.filter(it=>onHandOf(it)==null);
+    if (supSel) items = items.filter(it=>supplierOf(it)===supSel);
     if (narrowing && !items.length) continue;          // hide lists with nothing to show
     shownLists++;
     const low = all.filter(it=>(needOf(it)||0)>0).length, total = all.length;
@@ -1193,8 +1208,9 @@ function viewInventory(){
     out.push(fold("list:"+cat.id, false, cat.name, badge, body, {forced:narrowing}));
   }
   if (narrowing && !shownLists){
-    out.push(h("p",{class:"hint empty-search", text: q ? "No items match “"+S.invQuery.trim()+"”"+(filter==="low" ? " that need ordering." : filter==="uncounted" ? " that still need counting." : ".")
-                                                     : filter==="low" ? "Nothing needs ordering right now." : "Everything has been counted."}));
+    const from = supSel ? " from "+supplierById(supSel).name : "";
+    out.push(h("p",{class:"hint empty-search", text: q ? "No items"+from+" match “"+S.invQuery.trim()+"”"+(filter==="low" ? " that need ordering." : filter==="uncounted" ? " that still need counting." : ".")
+                                                     : filter==="low" ? "Nothing"+from+" needs ordering right now." : filter==="uncounted" ? "Everything"+from+" has been counted." : "No items"+from+" yet."}));
   }
   if (S.invEdit && !narrowing){
     out.push(h("form",{class:"inline", onsubmit:async e=>{ e.preventDefault(); if (await act("api_add_category",{p_name:S.newCat})){ S.newCat=""; render(); } }},
