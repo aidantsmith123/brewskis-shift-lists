@@ -625,3 +625,53 @@ fieldset.choices legend.lbl{font-size:13px;font-weight:600;color:var(--muted);pa
 .seg button{flex:1;border:0;background:none;border-radius:7px;padding:8px 4px;font-weight:600;color:var(--muted)}
 .seg button[aria-checked="true"]{background:var(--blue);color:var(--blue-ink);box-shadow:0 2px 6px rgba(31,79,209,.35)}
 .gearbtn[aria-pressed="true"]{background:#1f4fd1;border-color:#1f4fd1}
+
+/* ---------- v31: bottom tabs, slim header, Tonight card ---------- */
+.top{padding-block:6px 11px}
+.top .toplogo{width:122px}
+@media (max-width:420px){.top .toplogo{width:108px}}
+main{padding-top:18px}
+
+#tabs{position:fixed;left:0;right:0;bottom:0;z-index:15;margin:0;display:flex;justify-content:center;gap:2px;border-radius:0;
+  padding:6px max(8px,env(safe-area-inset-left,0px)) calc(6px + env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-right,0px));
+  background:color-mix(in srgb,var(--card) 90%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.4);backdrop-filter:blur(16px) saturate(1.4);
+  border-top:1px solid var(--line);box-shadow:0 -8px 24px -16px rgba(0,0,0,.35)}
+#tabs button{flex:1;max-width:120px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 2px 2px;border-radius:12px;
+  background:none;box-shadow:none;color:var(--muted);font-size:11.5px;font-weight:600;letter-spacing:.01em}
+#tabs button .ic{display:grid;place-items:center;width:56px;height:30px;border-radius:999px;transition:background-color .18s,color .18s}
+#tabs button svg{width:23px;height:23px}
+#tabs button[aria-pressed="true"]{background:none;box-shadow:none;color:var(--blue)}
+#tabs button[aria-pressed="true"] .ic{background:var(--boh-soft)}
+#tabs button[aria-pressed="true"] svg{stroke-width:2.3}
+#tabs button:active{transform:scale(.94)}
+#tabs button.has-dot::after{top:2px;right:calc(50% - 24px)}
+body{padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))}
+.toast{bottom:calc(82px + env(safe-area-inset-bottom,0px))}
+
+.tonight{display:flex;flex-direction:column;gap:14px;padding:18px;border-radius:20px;color:#fff;position:relative;overflow:hidden;
+  background:radial-gradient(120% 90% at 100% 0%,rgba(240,180,41,.28),transparent 55%),linear-gradient(160deg,#13328f,#1f4fd1 70%);
+  box-shadow:0 14px 30px -18px #13328f}
+.tn-top{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.tn-hello{display:flex;flex-direction:column;gap:4px;min-width:0}
+.tonight .eyebrow{color:var(--gold);font-weight:700}
+.tonight h2{font-size:34px;line-height:.95;color:#fff;overflow-wrap:anywhere}
+.tn-sum{margin:2px 0 0;display:flex;flex-wrap:wrap;gap:6px;align-items:center;color:rgba(255,255,255,.88);font-weight:600;font-size:15px}
+.tn-over{background:#ff6b5b;color:#fff;font-size:12.5px;font-weight:700;padding:2px 9px;border-radius:999px}
+.tn-stein{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;margin-right:10px;flex:none}
+.tonight .stein{margin-right:0;width:62px;height:88px}
+.tonight .stein-glass{border-color:rgba(255,255,255,.75);background:linear-gradient(90deg,rgba(255,255,255,.18),transparent 45%,rgba(255,255,255,.18))}
+.tonight .stein::after{border-color:rgba(255,255,255,.75)}
+.tn-count{font-family:var(--display);font-weight:800;font-size:20px;line-height:1;font-variant-numeric:tabular-nums}
+.tn-rows{display:flex;flex-direction:column;gap:6px}
+.tn-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:0;border-radius:14px;padding:10px 12px;color:#fff;
+  background:rgba(255,255,255,.12);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.tn-row:active{transform:scale(.98)}
+.tn-ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(255,255,255,.16);flex:none}
+.tn-ic svg{width:19px;height:19px}
+.tn-t{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.tn-t b{font-size:15.5px;line-height:1.25;overflow-wrap:anywhere}
+.tn-t span{font-size:13px;color:rgba(255,255,255,.78)}
+.tn-go{font-size:22px;line-height:1;color:rgba(255,255,255,.6)}
+.tn-row.hot .tn-ic{background:var(--gold);color:#3a2600}
+.tn-row.tn-event .tn-ic{background:color-mix(in srgb,var(--k) 55%,transparent);color:#fff}
+@media (max-width:360px){.tonight h2{font-size:28px}.tonight .stein{width:52px;height:76px}}

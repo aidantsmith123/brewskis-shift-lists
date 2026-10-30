@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 30;
+const APP_VERSION = 31;
 const APP_DATE = "2026-10-30";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -861,30 +861,74 @@ const visibleTasks = () => D().tasks.filter(t=>!t.role_id || canSeeRole(roleById
 const isMineTask = t => { const m = me(); return t.assignee ? t.assignee===m.id : (!t.role_id || (m.roles||[]).includes(t.role_id)); };
 const taskSort = (a,b)=>Number(!!b.important)-Number(!!a.important) || (taskDeadline(a)||Infinity)-(taskDeadline(b)||Infinity) || a.text.localeCompare(b.text);
 
+/* ---------- the Tonight card: the top of the Tasks tab ---------- */
+const ICONS = {
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  cal:'<rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M8 2.5v4M16 2.5v4M3 10h18"/>',
+  box:'<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+  hand:'<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>'
+};
+function icon(name){ const s = document.createElementNS("http://www.w3.org/2000/svg","svg"); s.setAttribute("viewBox","0 0 24 24"); s.setAttribute("aria-hidden","true");
+  s.setAttribute("fill","none"); s.setAttribute("stroke","currentColor"); s.setAttribute("stroke-width","2"); s.setAttribute("stroke-linecap","round"); s.setAttribute("stroke-linejoin","round");
+  s.innerHTML = ICONS[name] || ""; return s; }
+const compactTime = t => (t||"").replace(/:00(?=\s?[AP]M)/gi, "").replace(" – Close", " – close");   // "5:00 PM – Close" -> "5 PM – close"
+function greeting(){ const hr = new Date().getHours(); return hr < 5 ? "Late night" : hr < 12 ? "Morning" : hr < 17 ? "Afternoon" : "Evening"; }
+function tnRow(cls, ic, title, sub, onclick, flag){
+  return h("button",{type:"button", class:"tn-row "+cls+(flag?" "+flag:""), onclick},
+    h("span",{class:"tn-ic"}, icon(ic)),
+    h("span",{class:"tn-t"}, h("b",{text:title}), sub ? h("span",{text:sub}) : null),
+    h("span",{class:"tn-go", "aria-hidden":"true", text:"›"}));
+}
+function tonightCard(all){
+  const m = me(), now = new Date(), today = shiftDay();
+  const p = progressOf(all.filter(countsToday)), over = all.filter(isOverdue).length;
+  const rows = [];
+  /* your shift */
+  const next = myShifts().filter(s=>shiftEndDate(s) > now).sort((a,b)=>a.start_at.localeCompare(b.start_at))[0];
+  if (next){
+    const r = roleOfShift(next), onNow = new Date(next.start_at) <= now, isToday = shiftDay(new Date(next.start_at))===today;
+    const title = onNow ? "You're on now · until "+compactTime(next.end_at ? tFmt(next.end_at) : "close")
+                : isToday ? "You're on "+compactTime(shiftRange(next))
+                : "Next shift: "+shiftDayLabel2(next.start_at)+", "+compactTime(shiftRange(next));
+    rows.push(tnRow("tn-shift", "clock", title, [r && r.name, next.up_for_grabs ? "you asked for coverage" : null].filter(Boolean).join(" · "), ()=>go("schedule")));
+  }
+  /* shifts you could pick up */
+  const need = forYouShifts().length;
+  if (need) rows.push(tnRow("tn-cover", "hand", need===1 ? "1 shift needs coverage" : need+" shifts need coverage", "Can you take one?", ()=>go("schedule"), "hot"));
+  /* events today or tomorrow */
+  const evs = eventInstances(today, addDays(today,1));
+  if (evs.length){
+    const e = evs[0], same = evs.filter(x=>x.day===e.day).length;
+    rows.push(tnRow("tn-event ev-"+e.kind, "cal", eventWhen(e)+": "+e.title,
+      [compactTime(eventTime(e)), same > 1 ? "+"+(same-1)+" more" : null].filter(Boolean).join(" · "), ()=>{ go("events"); openEventSheet(e); }));
+  }
+  /* managers: the next order deadline */
+  if (isAdmin() && D().suppliers.length){
+    const nx = suppliersByDeadline().find(x=>x.d && !x.ordered);
+    if (nx){
+      const n = belowPar(nx.s.id).length, soon = nx.d - now < 24*3600e3;
+      rows.push(tnRow("tn-order", "box", "Order "+nx.s.name,
+        "By "+compactTime(dueText(nx.d))+" · "+(n ? n+" to order" : "nothing low"), ()=>go("inventory"), soon ? "hot" : ""));
+    }
+  }
+  const left = p.total - p.done;
+  const sum = !p.total ? "Nothing due today" : !left ? "Everything due today is done 🍻" : left+" of "+p.total+" tasks left today";
+  return h("section",{class:"tonight", "aria-label":"Your shift at a glance"},
+    h("div",{class:"tn-top"},
+      h("div",{class:"tn-hello"},
+        h("span",{class:"eyebrow", text:parseDay(today).toLocaleDateString(undefined,{weekday:"long", month:"short", day:"numeric"})}),
+        h("h2",{text:greeting()+", "+(m.name||"").split(/\s+/)[0]}),
+        h("p",{class:"tn-sum"}, h("span",{text:sum}), over ? h("span",{class:"tn-over", text:over+" overdue"}) : null)),
+      h("div",{class:"tn-stein", title:p.done+" of "+p.total+" done"}, stein(p.pct), p.total ? h("span",{class:"tn-count", text:p.done+"/"+p.total}) : null)),
+    rows.length ? h("div",{class:"tn-rows"}, rows) : null);
+}
+
 function viewOverview(){
   const out = [], d = D(), admin = isAdmin();
   const all = visibleTasks();
-  const p = progressOf(all.filter(countsToday));
-  const overAll = all.filter(isOverdue).length;
-  out.push(h("section",{class:"summary", "aria-label":"Today's tasks: "+p.done+" of "+p.total+" done"},
-    stein(p.pct),
-    h("div",{class:"sumtext"},
-      h("div",{class:"big"}, String(p.done), h("small",{text:" of "+p.total})),
-      h("div",{class:"sumlabel", text: p.total ? (p.done===p.total ? "Everything due today is done" : "tasks due today are done") : "Nothing due today"}),
-      overAll ? h("div",{class:"sumleft over", text:overAll+" overdue"}) : p.total && p.done < p.total ? h("div",{class:"sumleft", text:(p.total-p.done)+" to go"}) : null)));
-  const es = eventStrip(); if (es) out.push(es);
-  const ns = nextShiftStrip(); if (ns) out.push(ns);
-  if (admin && d.suppliers.length){
-    const next = suppliersByDeadline().find(x=>x.d && !x.ordered);
-    if (next){
-      const n = belowPar(next.s.id).length, soon = next.d - new Date() < 24*3600e3;
-      out.push(h("button",{type:"button", class:"strip"+(soon?" urgent":""), onclick:()=>go("inventory")},
-        h("span",{class:"t"}, h("span",{class:"eyebrow", text:"Next order deadline"}), h("span",{style:"font-weight:700", text:next.s.name}), h("span",{class:"due"+(soon?" soon":""), text:dueText(next.d)})),
-        h("span",{class:"tag "+(n?"warn":"ok"), text: n ? n+" to order" : "Nothing low"})));
-    }
-  }
+  out.push(tonightCard(all));
 
-  out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{text:"Tasks", style:"font-size:32px"}),
+  out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{text:"Tasks", style:"font-size:28px"}),
     admin && canWrite() && !S.addingTask ? h("button",{type:"button", class:"btn small", onclick:()=>{ S.addingTask = true; render(); $("newTask")?.focus(); }},"Add task") : null));
   checkPushOnce();
   if (S.push.loaded && !(S.push.sub && S.push.prefs)) out.push(h("button",{type:"button", class:"linkbtn alertlink tasks-alert", onclick:openNotify},"🔔 Get alerts on this phone when new tasks are added"));
@@ -1362,20 +1406,6 @@ function takeBlocker(s, strict){
 const takeableShifts = () => (S.data ? D().shifts.filter(s=>!takeBlocker(s)) : []);
 /* for the tab dot and the home strip: only shifts in your own roles, so managers aren't nagged by every open shift they post */
 const forYouShifts = () => (S.data ? D().shifts.filter(s=>!takeBlocker(s, true)) : []);
-function nextShiftStrip(){
-  const now = new Date();
-  const next = myShifts().filter(s=>shiftEndDate(s) > now).sort((a,b)=>a.start_at.localeCompare(b.start_at))[0];
-  const need = forYouShifts().length;
-  if (!next && !need) return null;
-  const r = next && roleOfShift(next);
-  return h("button",{type:"button", class:"strip nextshift"+(need?" needcover":""), onclick:()=>go("schedule")},
-    h("span",{class:"t"},
-      h("span",{class:"eyebrow", text: next ? (new Date(next.start_at) <= now ? "You're on now" : "Your next shift") : "Coverage needed"}),
-      next ? h("span",{style:"font-weight:700", text:shiftDayLabel2(next.start_at)+" · "+shiftRange(next)})
-           : h("span",{style:"font-weight:700", text: need===1 ? "A shift needs someone. Can you cover it?" : need+" shifts need someone. Can you cover one?"}),
-      next && r ? h("span",{class:"due", text:r.name + (next.up_for_grabs ? " · asked for coverage" : "")}) : null),
-    need ? h("span",{class:"tag warn", text:need+" need"+(need===1?"s":"")+" coverage"}) : null);
-}
 /* which shifts to show for a week: from the app's data when it covers that week, otherwise ask the server */
 function shiftsForWeek(ws){
   const we = ymd(new Date(parseDay(ws).getTime() + 6*86400e3));
@@ -2049,17 +2079,6 @@ function openEventForm(e, dateStr){
     h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
   if (!e) title.focus();
 }
-/* Tasks tab: a heads-up when an event is today or tomorrow */
-function eventStrip(){
-  const today = shiftDay(), soon = eventInstances(today, addDays(today,1));
-  if (!soon.length) return null;
-  const e = soon[0], same = soon.filter(x=>x.day===e.day).length;
-  return h("button",{type:"button", class:"strip evstrip", onclick:()=>{ go("events"); openEventSheet(e); }},
-    h("span",{class:"t"}, h("span",{class:"eyebrow", text:eventWhen(e)+(same > 1 ? " · +"+(same-1)+" more" : "")}),
-      h("span",{style:"font-weight:700", text:e.title}), eventTime(e) ? h("span",{class:"due", text:eventTime(e)}) : null),
-    h("span",{class:"tag ok", text:kindInfo(e.kind)[2]+" "+kindInfo(e.kind)[1]}));
-}
-
 /* ---------- render ---------- */
 function renderOffline(){
   const el = $("offline");
@@ -2072,7 +2091,6 @@ function renderUpdateBar(){
   if (show){ $("updatetext").textContent = "Version "+S.latest.version+" of the app is ready."; $("updateBtn").disabled = S.updating; $("updateBtn").textContent = S.updating ? "Updating…" : "Update now"; }
 }
 function render(){
-  $("dayLabel").textContent = shiftDayLabel();
   renderOffline();
   renderUpdateBar();
   $("installBtn").hidden = !S.installEvent || !S.session;
