@@ -1,5 +1,5 @@
 {
-  "version": 29,
+  "version": 30,
   "date": "2026-10-30",
-  "notes": "New Settings page (the gear in the top left): notifications, sounds, light or dark mode, and your account."
+  "notes": "The Team tab moved into Settings (the gear in the top left)."
 }

@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 29;
+const APP_VERSION = 30;
 const APP_DATE = "2026-10-30";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -1712,9 +1712,10 @@ function viewTeam(){
   if (!isAdmin()){ S.view="overview"; return viewOverview(); }
   const d = D(), out = [];
   out.push(h("section",{class:"stack"},
+    h("button",{type:"button", class:"back", onclick:()=>go("settings")},"← Settings"),
     h("div",{class:"sec-head"}, h("h2",{text:"Team"}), h("span",{class:"hint", text:d.staff.length+" "+(d.staff.length===1?"person":"people")})),
     versionSummary(),
-    h("p",{class:"hint", text:"Everyone logs in with the number you assign here. Only people with the Manager role get manager controls: this Team tab, inventory pars and suppliers, order deadlines, and starter lists."}),
+    h("p",{class:"hint", text:"Everyone logs in with the number you assign here. Only people with the Manager role get manager controls: this Team page, inventory pars and suppliers, order deadlines, and starter lists."}),
     h("form",{class:"inline", onsubmit:async e=>{ e.preventDefault(); const n = S.newPerson.trim(); if (!n) return; if (await act("api_add_staff",{p_name:n}, n+" added")){ S.newPerson=""; render(); } }},
       h("input",{type:"text", id:"newPerson", placeholder:"Add a person by name", "aria-label":"Name", value:S.newPerson, oninput:e=>S.newPerson=e.target.value}),
       h("button",{type:"submit", class:"btn"},"Add")),
@@ -2078,7 +2079,7 @@ function render(){
   const m = me(), loggedIn = !!(S.session && m);
   $("whoBtn").hidden = !loggedIn;
   $("settingsBtn").hidden = !loggedIn;
-  $("settingsBtn").setAttribute("aria-pressed", String(S.view==="settings" || (S.view==="notify" && S.notifyBack==="settings")));
+  $("settingsBtn").setAttribute("aria-pressed", String(S.view==="settings" || S.view==="team" || (S.view==="notify" && S.notifyBack==="settings")));
   $("whoName").textContent = loggedIn ? m.name + (m.manager ? " · Mgr" : "") : "";
   $("whoDot").textContent = loggedIn ? initials(m.name) : "?";
   $("tabs").hidden = !loggedIn;
@@ -2088,16 +2089,14 @@ function render(){
   else if (!m) kids = [h("p",{class:"hint", text: S.offline ? "You're offline. Connect once to load your lists." : "Loading…"})];
   else {
     const admin = isAdmin();
-    $("tabTeam").hidden = !admin;
     if (!admin && S.view==="team") S.view = "overview";
     const tv = S.view==="notify" ? (S.notifyBack || "overview") : S.view;
-    const tab = tv==="settings" ? "settings" : tv==="team" ? "team" : tv==="inventory" ? "inventory" : tv==="schedule" ? "schedule" : tv==="events" ? "events" : "shifts";
+    const tab = tv==="settings" || tv==="team" ? "settings" : tv==="inventory" ? "inventory" : tv==="schedule" ? "schedule" : tv==="events" ? "events" : "shifts";
     $("tabSched").setAttribute("aria-pressed", String(tab==="schedule"));
     $("tabSched").classList.toggle("has-dot", forYouShifts().length > 0);
     $("tabShifts").setAttribute("aria-pressed", String(tab==="shifts"));
     $("tabInv").setAttribute("aria-pressed", String(tab==="inventory"));
     $("tabEvents").setAttribute("aria-pressed", String(tab==="events"));
-    $("tabTeam").setAttribute("aria-pressed", String(tab==="team"));
     kids = S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : S.view==="settings" ? viewSettings() : S.view==="schedule" ? viewSchedule() : S.view==="events" ? viewEvents() : viewOverview();
   }
   const active = document.activeElement, aid = active && active.id;
@@ -2108,13 +2107,16 @@ function render(){
 }
 
 /* ---------- wiring ---------- */
-$("whoBtn").addEventListener("click", ()=>go("settings"));
-$("settingsBtn").addEventListener("click", ()=>go(S.view==="settings" ? (S.settingsBack || "overview") : (S.settingsBack = S.view, "settings")));
+$("whoBtn").addEventListener("click", ()=>{ if (!["settings","team","notify"].includes(S.view)) S.settingsBack = S.view; go("settings"); });
+$("settingsBtn").addEventListener("click", ()=>{
+  if (S.view==="settings" || S.view==="team") return go(S.settingsBack || "overview");   // tap again: back to the tab you were on
+  if (S.view!=="notify") S.settingsBack = S.view;
+  go("settings");
+});
 $("installBtn").addEventListener("click", install);
 $("updateBtn").addEventListener("click", applyUpdate);
 $("tabShifts").addEventListener("click", ()=>go("overview"));
 $("tabInv").addEventListener("click", ()=>go("inventory"));
-$("tabTeam").addEventListener("click", ()=>{ go("team"); loadVersions(); });
 $("tabSched").addEventListener("click", ()=>go("schedule"));
 $("tabEvents").addEventListener("click", ()=>go("events"));
 document.addEventListener("keydown", e=>{
