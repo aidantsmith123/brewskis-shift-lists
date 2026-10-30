@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 25;
+const APP_VERSION = 26;
 const APP_DATE = "2026-10-30";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -885,7 +885,7 @@ function activitySection(){
   const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked", shift_posted:" asked for coverage on %", shift_taken:" is covering %", skipped:" called off %", unskipped:" brought back %"};
   /* staff only see activity from their side of the pub, plus inventory counts */
   const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); ok.add("Tasks"); ok.add("Events"); return place=>ok.has(place); })();
-  const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place||""}));
+  const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place==="Schedule" ? "Shifts" : (l.place||"")}));   // the Schedule tab is called Shifts now
   let shown = ev;
   const q = admin ? S.actQuery.trim().toLowerCase() : "";
   if (admin && S.actRange!=="all"){ const cut = S.actRange==="today" ? shiftStartISO() : new Date(Date.now()-7*86400e3).toISOString(); shown = shown.filter(e=>new Date(e.at).toISOString()>=cut); }
@@ -1358,7 +1358,7 @@ function shiftRow(s){
         s.up_for_grabs ? h("span",{class:"tag "+(canTake||mine?"warn":"plain"), text:"Needs coverage"}) : null,
         s.note ? h("span",{class:"hint", text:s.note}) : null)));
 }
-/* turn on coverage alerts: check this phone once, quietly, the first time the Schedule tab opens */
+/* turn on coverage alerts: check this phone once, quietly, the first time the Shifts tab opens */
 function coverAlertsOn(){ return !!(S.push.sub && S.push.prefs && S.push.prefs.coverage); }
 function checkPushOnce(){
   if (S.push.loaded || S.push.checking) return;
@@ -1409,7 +1409,7 @@ function viewSchedule(){
   /* coverage first */
   const open = D().shifts.filter(s=>s.up_for_grabs && new Date(s.start_at) > now).sort((a,b)=>a.start_at.localeCompare(b.start_at));
   const canDo = open.filter(s=>!takeBlocker(s)).length;
-  out.push(h("div",{class:"rolehead"}, h("h2",{text:"Schedule", style:"font-size:32px"})));
+  out.push(h("div",{class:"rolehead"}, h("h2",{text:"Shifts", style:"font-size:32px"})));
   out.push(h("div",{class:"card coverhero"},
     h("div",{class:"eyebrow", text:"Shift coverage"}),
     h("h3",{text:"Can't make a shift?"}),

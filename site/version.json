@@ -1,5 +1,5 @@
 {
-  "version": 25,
+  "version": 26,
   "date": "2026-10-30",
-  "notes": "Standard events can repeat: every week, every other week or monthly. Managers can call off a single date."
+  "notes": "The Schedule tab is now called Shifts."
 }
