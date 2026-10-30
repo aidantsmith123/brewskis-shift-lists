@@ -675,3 +675,56 @@ body{padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))}
 .tn-row.hot .tn-ic{background:var(--gold);color:#3a2600}
 .tn-row.tn-event .tn-ic{background:color-mix(in srgb,var(--k) 55%,transparent);color:#fff}
 @media (max-width:360px){.tonight h2{font-size:28px}.tonight .stein{width:52px;height:76px}}
+
+/* ---------- v32: calmer headings, tidier colors, smooth loading ---------- */
+/* headings: sentence case in the body font; the display font is kept for big numbers */
+h2{font-family:var(--body);font-weight:800;font-size:20px;text-transform:none;letter-spacing:-.01em;line-height:1.2}
+h2.ptitle{font-size:28px;letter-spacing:-.02em;line-height:1.1}
+h2.sectitle{font-size:22px}
+.fold-head h2{font-size:19px}
+.sheet h2{font-size:22px}
+.empty h2{font-size:19px}
+.tonight h2{font-family:var(--body);font-weight:800;font-size:30px;line-height:1.05;letter-spacing:-.02em;text-transform:none}
+@media (max-width:360px){.tonight h2{font-size:26px}}
+.evhero .evtitle,.coverhero h3{font-family:var(--body);font-weight:800;font-size:26px;line-height:1.1;letter-spacing:-.02em;text-transform:none}
+.evsheet-title{font-size:28px;letter-spacing:-.02em;line-height:1.1}
+.bigtime{font-family:var(--body);font-size:26px;letter-spacing:-.02em;text-transform:none}
+.dayhead b,.covwhen b{font-family:var(--body);font-weight:800;font-size:17px;text-transform:none;letter-spacing:-.01em}
+.sethead{font-size:12.5px;letter-spacing:.04em}
+.tasks-alert{align-self:flex-start;text-align:left}
+
+/* colors: one bold card per screen, everything else flat */
+.calcard,.tapstrip{background:var(--card)}
+.updatebar{background:var(--blue)}
+.evhero.ev-party{background:linear-gradient(135deg,#7a4f05,#c98a12)}
+.evhero.ev-entertainment{background:linear-gradient(135deg,#341b80,#6a3fd0)}
+.evhero.ev-other{background:linear-gradient(135deg,#262c47,#4b5370)}
+
+/* loading placeholders */
+.skel{background:var(--soft);border-radius:14px;position:relative;overflow:hidden}
+.skel::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent)}
+.skel-hero{height:200px;border-radius:20px}
+.skel-row{height:64px}
+.skel-day{height:96px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .skel::after{background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent)}}
+:root[data-theme="dark"] .skel::after{background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent)}
+
+/* pull to refresh */
+html,body{overscroll-behavior-y:contain}
+.ptr{position:fixed;top:0;left:50%;z-index:30;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;pointer-events:none;
+  background:var(--card);box-shadow:0 6px 18px -6px rgba(0,0,0,.35);opacity:0;transform:translate(-50%,-52px);transition:transform .2s ease-out,opacity .2s}
+.ptr-spin{width:20px;height:20px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--blue)}
+.ptr.ready .ptr-spin{border-color:var(--blue);border-top-color:var(--gold)}
+
+@media (prefers-reduced-motion:no-preference){
+  .skel::after{animation:shimmer 1.3s ease-in-out infinite}
+  @keyframes shimmer{to{transform:translateX(100%)}}
+  .ptr.spin .ptr-spin{animation:ptrspin .7s linear infinite}
+  @keyframes ptrspin{to{transform:rotate(360deg)}}
+  /* moving between tabs: a soft rise */
+  #view.enter{animation:enter2 .3s cubic-bezier(.2,.8,.2,1)}
+  @keyframes enter2{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  .tonight,.evhero,.coverhero{transition:transform .15s ease-out}
+  .evhero:active{transform:scale(.985)}
+}
+.seg button[aria-checked="true"]{background:#1f4fd1;color:#fff}

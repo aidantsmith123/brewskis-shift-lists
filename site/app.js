@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 31;
+const APP_VERSION = 32;
 const APP_DATE = "2026-10-30";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -548,7 +548,7 @@ function viewSettings(){
   const pushOn = !!(S.push.sub && S.push.prefs);
   const pushVal = !pushSupported() ? "Not available" : (typeof Notification!=="undefined" && Notification.permission==="denied") ? "Blocked" : !S.push.loaded ? "" : pushOn ? "On" : "Off";
   const theme = themeNow();
-  const out = [h("div",{class:"rolehead"}, h("h2",{text:"Settings", style:"font-size:32px"}))];
+  const out = [h("div",{class:"rolehead"}, h("h2",{class:"ptitle", text:"Settings"}))];
 
   out.push(h("section",{class:"stack"},
     h("h3",{class:"sethead", text:"Account"}),
@@ -651,7 +651,7 @@ function viewNotify(){
   const mgr = isAdmin();
   const out = [h("div",{class:"rolehead"},
     h("button",{type:"button", class:"back", onclick:()=>go(S.notifyBack || "overview")},"← Back"),
-    h("h2",{text:"Notifications", style:"font-size:32px"}),
+    h("h2",{class:"ptitle", text:"Notifications"}),
     h("p",{class:"hint", text:"These settings are for this phone only. Everyone turns notifications on on their own phone."}))];
   if (!pushSupported()){
     out.push(isIOS() && !isStandalone()
@@ -665,7 +665,7 @@ function viewNotify(){
     out.push(emptyCard("Notifications are blocked", isIOS() ? "Open your iPhone's Settings, tap Notifications, then Brewskis, and turn on Allow Notifications. Then come back here." : "In Chrome, tap the icon to the left of the address (or Settings → Site settings → Notifications) and allow notifications for this site. Then come back here."));
     return out;
   }
-  if (!S.push.loaded){ out.push(h("p",{class:"hint", text:"Checking this phone…"})); return out; }
+  if (!S.push.loaded){ out.push(...skeleton("rows")); return out; }
   if (S.push.err) out.push(h("p",{class:"loginerr", role:"alert", text:S.push.err}));
   if (!S.push.sub || !S.push.prefs){
     out.push(h("div",{class:"card"},
@@ -839,6 +839,14 @@ function afterRender(){
   }
   S.fx = {};   // one-shot effects only play on the render that triggered them
 }
+/* grey placeholder shapes while something loads */
+function skeleton(kind){
+  const b = (cls, style) => h("div",{class:"skel "+(cls||""), style:style||"", "aria-hidden":"true"});
+  const busy = h("p",{class:"sr-only", role:"status", text:"Loading…"});
+  if (kind==="home") return [busy, b("skel-hero"), b("", "height:22px;width:38%"), h("div",{class:"stack"}, [0,1,2,3].map(()=>b("skel-row")))];
+  if (kind==="week") return [busy, h("div",{class:"stack"}, [0,1,2].map(()=>b("skel-day")))];
+  return [busy, h("div",{class:"stack"}, [0,1,2].map(()=>b("skel-row")))];
+}
 function emptyCard(title, body, ...actions){ actions = actions.filter(Boolean); return h("div",{class:"empty"}, h("h2",{text:title}), h("p",{text:body}), actions.length ? h("div",{class:"inline"}, actions) : null); }
 function svgCheck(){ const s = document.createElementNS("http://www.w3.org/2000/svg","svg"); s.setAttribute("viewBox","0 0 24 24"); s.innerHTML = '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color:var(--card)"/>'; return s; }
 const doneName = t => t.done_by_name || staffName(t.done_by);
@@ -928,7 +936,7 @@ function viewOverview(){
   const all = visibleTasks();
   out.push(tonightCard(all));
 
-  out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{text:"Tasks", style:"font-size:28px"}),
+  out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{class:"sectitle", text:"Tasks"}),
     admin && canWrite() && !S.addingTask ? h("button",{type:"button", class:"btn small", onclick:()=>{ S.addingTask = true; render(); $("newTask")?.focus(); }},"Add task") : null));
   checkPushOnce();
   if (S.push.loaded && !(S.push.sub && S.push.prefs)) out.push(h("button",{type:"button", class:"linkbtn alertlink tasks-alert", onclick:openNotify},"🔔 Get alerts on this phone when new tasks are added"));
@@ -1279,7 +1287,7 @@ function viewInventory(){
   const admin = isAdmin(), out = [], d = D();
   if (!admin) S.invEdit = false;
   out.push(h("div",{class:"rolehead"},
-    h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"Inventory", style:"font-size:32px"}),
+    h("div",{class:"sec-head", style:"margin:0"}, h("h2",{class:"ptitle", text:"Inventory"}),
       admin && d.invcats.length ? h("button",{type:"button", class:"btn "+(S.invEdit?"":"ghost")+" small", onclick:()=>{ S.invEdit=!S.invEdit; S.confirm=null; render(); }}, S.invEdit ? "Done editing" : "Edit lists & pars") : null),
     h("p",{class:"hint", text: S.invEdit ? "Set each item's par (how much should be on the shelf), its unit and who you order it from." : admin ? "Count what's on the shelf. Anything under par goes on that supplier's order." : "Count what's on the shelf. Managers use your counts to place orders."})));
   if (!d.invcats.length){
@@ -1480,7 +1488,7 @@ function viewSchedule(){
   /* coverage first */
   const open = D().shifts.filter(s=>s.up_for_grabs && new Date(s.start_at) > now).sort((a,b)=>a.start_at.localeCompare(b.start_at));
   const canDo = open.filter(s=>!takeBlocker(s)).length;
-  out.push(h("div",{class:"rolehead"}, h("h2",{text:"Shifts", style:"font-size:32px"})));
+  out.push(h("div",{class:"rolehead"}, h("h2",{class:"ptitle", text:"Shifts"})));
   out.push(h("div",{class:"card coverhero"},
     h("div",{class:"eyebrow", text:"Shift coverage"}),
     h("h3",{text:"Can't make a shift?"}),
@@ -1511,7 +1519,7 @@ function viewSchedule(){
     ws!==thisWeek ? h("button",{type:"button", class:"back", onclick:()=>{ S.week = thisWeek; render(); }},"← Back to this week") : null));
 
   /* the week */
-  if (shifts==null) out.push(h("p",{class:"hint", text:"Loading that week…"}));
+  if (shifts==null) out.push(...skeleton("week"));
   else {
     const days = h("section",{class:"days"});
     for (let i=0;i<7;i++){
@@ -1872,7 +1880,7 @@ function viewEvents(){
   if (!S.evMonth) S.evMonth = today.slice(0,7);
   const up = upcomingEvents();
 
-  out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{text:"Events", style:"font-size:32px"}),
+  out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{class:"ptitle", text:"Events"}),
     admin && canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>openEventForm(null, S.evDay && S.evDay >= today ? S.evDay : null)},"Add event") : null));
 
   /* next up */
@@ -2104,7 +2112,7 @@ function render(){
   let kids;
   if (!configured()) kids = viewNotConfigured();
   else if (!S.session) kids = viewLogin();
-  else if (!m) kids = [h("p",{class:"hint", text: S.offline ? "You're offline. Connect once to load your lists." : "Loading…"})];
+  else if (!m) kids = S.offline ? [h("p",{class:"hint", text:"You're offline. Connect once to load your lists."})] : skeleton("home");
   else {
     const admin = isAdmin();
     if (!admin && S.view==="team") S.view = "overview";
@@ -2156,6 +2164,35 @@ setInterval(()=>{ if (!document.hidden && !(document.activeElement && document.a
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
 }
+
+/* pull down at the top of the screen to refresh */
+(function pullToRefresh(){
+  const ind = h("div",{class:"ptr", "aria-hidden":"true"}, h("span",{class:"ptr-spin"}));
+  document.body.append(ind);
+  const TRIGGER = 64, MAX = 96;
+  let y0 = null, pull = 0, busy = false;
+  const set = px => { ind.style.transform = "translate(-50%,"+(px - 52)+"px)"; ind.style.opacity = String(Math.min(1, px/TRIGGER));
+                      ind.firstChild.style.transform = "rotate("+(px*4)+"deg)"; ind.classList.toggle("ready", px >= TRIGGER); };
+  const blocked = e => !S.session || busy || !$("sheet").hidden || window.scrollY > 2 || document.getElementById("intro") ||
+                       (e.target.closest && e.target.closest("input,textarea,select,.keypad"));
+  addEventListener("touchstart", e=>{ y0 = (e.touches.length===1 && !blocked(e)) ? e.touches[0].clientY : null; pull = 0; }, {passive:true});
+  addEventListener("touchmove", e=>{
+    if (y0==null) return;
+    const dy = e.touches[0].clientY - y0;
+    if (dy <= 0 || window.scrollY > 2){ pull = 0; set(0); return; }
+    pull = Math.min(MAX, dy * .5); set(pull);
+  }, {passive:true});
+  addEventListener("touchend", async ()=>{
+    if (y0==null) return; y0 = null;
+    if (pull >= TRIGGER){
+      busy = true; ind.classList.add("spin"); set(TRIGGER); play("tap");
+      await Promise.all([refresh(), Promise.resolve(checkLatest()).catch(()=>{}), new Promise(r=>setTimeout(r, 700))]);
+      busy = false; ind.classList.remove("spin");
+    }
+    pull = 0; set(0);
+  });
+  set(0);
+})();
 
 /* intro: about a second and a half on opening the app; tap to skip */
 (function intro(){
