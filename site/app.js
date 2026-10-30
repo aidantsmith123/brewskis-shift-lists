@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 32;
+const APP_VERSION = 33;
 const APP_DATE = "2026-10-30";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -880,55 +880,54 @@ function icon(name){ const s = document.createElementNS("http://www.w3.org/2000/
   s.setAttribute("fill","none"); s.setAttribute("stroke","currentColor"); s.setAttribute("stroke-width","2"); s.setAttribute("stroke-linecap","round"); s.setAttribute("stroke-linejoin","round");
   s.innerHTML = ICONS[name] || ""; return s; }
 const compactTime = t => (t||"").replace(/:00(?=\s?[AP]M)/gi, "").replace(" – Close", " – close");   // "5:00 PM – Close" -> "5 PM – close"
-function greeting(){ const hr = new Date().getHours(); return hr < 5 ? "Late night" : hr < 12 ? "Morning" : hr < 17 ? "Afternoon" : "Evening"; }
-function tnRow(cls, ic, title, sub, onclick, flag){
-  return h("button",{type:"button", class:"tn-row "+cls+(flag?" "+flag:""), onclick},
-    h("span",{class:"tn-ic"}, icon(ic)),
-    h("span",{class:"tn-t"}, h("b",{text:title}), sub ? h("span",{text:sub}) : null),
-    h("span",{class:"tn-go", "aria-hidden":"true", text:"›"}));
+/* a line on the chalkboard: label, dotted leader, value — like a menu */
+function boardRow(cls, label, value, onclick, hot){
+  return h("button",{type:"button", class:"bd-row "+cls+(hot?" hot":""), onclick},
+    h("span",{class:"bd-l", text:label}), h("span",{class:"bd-dots", "aria-hidden":"true"}), h("span",{class:"bd-v", text:value}));
 }
 function tonightCard(all){
   const m = me(), now = new Date(), today = shiftDay();
   const p = progressOf(all.filter(countsToday)), over = all.filter(isOverdue).length;
-  const rows = [];
+  const rows = [], wd = iso => new Date(iso).toLocaleDateString([], {weekday:"short"});
   /* your shift */
   const next = myShifts().filter(s=>shiftEndDate(s) > now).sort((a,b)=>a.start_at.localeCompare(b.start_at))[0];
   if (next){
-    const r = roleOfShift(next), onNow = new Date(next.start_at) <= now, isToday = shiftDay(new Date(next.start_at))===today;
-    const title = onNow ? "You're on now · until "+compactTime(next.end_at ? tFmt(next.end_at) : "close")
-                : isToday ? "You're on "+compactTime(shiftRange(next))
-                : "Next shift: "+shiftDayLabel2(next.start_at)+", "+compactTime(shiftRange(next));
-    rows.push(tnRow("tn-shift", "clock", title, [r && r.name, next.up_for_grabs ? "you asked for coverage" : null].filter(Boolean).join(" · "), ()=>go("schedule")));
+    const onNow = new Date(next.start_at) <= now, isToday = shiftDay(new Date(next.start_at))===today;
+    rows.push(boardRow("tn-shift", onNow ? "On now" : isToday ? "Your shift" : "Next shift",
+      onNow ? "until "+compactTime(next.end_at ? tFmt(next.end_at) : "close")
+            : (isToday ? "" : shiftDayLabel2(next.start_at)+" · ")+compactTime(shiftRange(next)),
+      ()=>go("schedule")));
   }
   /* shifts you could pick up */
-  const need = forYouShifts().length;
-  if (need) rows.push(tnRow("tn-cover", "hand", need===1 ? "1 shift needs coverage" : need+" shifts need coverage", "Can you take one?", ()=>go("schedule"), "hot"));
+  const open = forYouShifts().sort((a,b)=>a.start_at.localeCompare(b.start_at));
+  if (open.length===1){
+    const s = open[0];
+    rows.push(boardRow("tn-cover", s.staff_id ? "Cover "+staffName(s.staff_id).split(/\s+/)[0]+"'s shift?" : "Take the open shift?",
+      wd(s.start_at)+" "+compactTime(tFmt(s.start_at)), ()=>go("schedule"), true));
+  } else if (open.length) rows.push(boardRow("tn-cover", open.length+" shifts need cover", "See them", ()=>go("schedule"), true));
   /* events today or tomorrow */
-  const evs = eventInstances(today, addDays(today,1));
-  if (evs.length){
-    const e = evs[0], same = evs.filter(x=>x.day===e.day).length;
-    rows.push(tnRow("tn-event ev-"+e.kind, "cal", eventWhen(e)+": "+e.title,
-      [compactTime(eventTime(e)), same > 1 ? "+"+(same-1)+" more" : null].filter(Boolean).join(" · "), ()=>{ go("events"); openEventSheet(e); }));
+  for (const e of eventInstances(today, addDays(today,1)).slice(0, 3)){
+    const t = compactTime(e.start_time ? fmtClock(e.start_time) : "");
+    rows.push(boardRow("tn-event ev-"+e.kind, e.title, e.day===today ? (t || "Today") : "Tomorrow"+(t ? " "+t : ""), ()=>{ go("events"); openEventSheet(e); }));
   }
   /* managers: the next order deadline */
   if (isAdmin() && D().suppliers.length){
     const nx = suppliersByDeadline().find(x=>x.d && !x.ordered);
-    if (nx){
-      const n = belowPar(nx.s.id).length, soon = nx.d - now < 24*3600e3;
-      rows.push(tnRow("tn-order", "box", "Order "+nx.s.name,
-        "By "+compactTime(dueText(nx.d))+" · "+(n ? n+" to order" : "nothing low"), ()=>go("inventory"), soon ? "hot" : ""));
-    }
+    if (nx) rows.push(boardRow("tn-order", "Order "+nx.s.name, compactTime(dueText(nx.d).split(" · ")[0]), ()=>go("inventory"), nx.d - now < 24*3600e3));
   }
+  const hr = now.getHours(), hello = hr >= 5 && hr < 12 ? "Good morning" : hr >= 12 && hr < 17 ? "Good afternoon" : "Good evening";
   const left = p.total - p.done;
-  const sum = !p.total ? "Nothing due today" : !left ? "Everything due today is done 🍻" : left+" of "+p.total+" tasks left today";
-  return h("section",{class:"tonight", "aria-label":"Your shift at a glance"},
-    h("div",{class:"tn-top"},
+  return h("div",{class:"tonight"},
+    h("section",{class:"tn-top", "aria-label":"Today"},
       h("div",{class:"tn-hello"},
-        h("span",{class:"eyebrow", text:parseDay(today).toLocaleDateString(undefined,{weekday:"long", month:"short", day:"numeric"})}),
-        h("h2",{text:greeting()+", "+(m.name||"").split(/\s+/)[0]}),
-        h("p",{class:"tn-sum"}, h("span",{text:sum}), over ? h("span",{class:"tn-over", text:over+" overdue"}) : null)),
-      h("div",{class:"tn-stein", title:p.done+" of "+p.total+" done"}, stein(p.pct), p.total ? h("span",{class:"tn-count", text:p.done+"/"+p.total}) : null)),
-    rows.length ? h("div",{class:"tn-rows"}, rows) : null);
+        h("span",{class:"eyebrow", text:parseDay(today).toLocaleDateString(undefined,{weekday:"long"})+" · "+parseDay(today).toLocaleDateString(undefined,{month:"long", day:"numeric"})}),
+        h("h2",{}, hello+", ", h("i",{text:(m.name||"").split(/\s+/)[0]})),
+        h("p",{class:"tn-sum"},
+          h("span",{text: !p.total ? "Nothing due today" : !left ? "All done for today 🍻" : p.done+" of "+p.total+" done"}),
+          over ? h("span",{class:"tn-over", text:" · "+over+" overdue"}) : null)),
+      h("div",{class:"tn-stein", title:p.done+" of "+p.total+" done"}, stein(p.pct))),
+    rows.length ? h("section",{class:"board", "aria-label":"Tonight at Brewski's"},
+      h("h3",{class:"bd-title", text:"Tonight at Brewski's"}), rows) : null);
 }
 
 function viewOverview(){
