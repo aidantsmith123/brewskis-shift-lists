@@ -1,5 +1,5 @@
 {
-  "version": 28,
+  "version": 29,
   "date": "2026-10-30",
-  "notes": "Cleaner header: just the logo, centered."
+  "notes": "New Settings page (the gear in the top left): notifications, sounds, light or dark mode, and your account."
 }

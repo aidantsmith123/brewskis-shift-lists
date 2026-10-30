@@ -608,3 +608,20 @@ fieldset.choices legend.lbl{font-size:13px;font-weight:600;color:var(--muted);pa
 @media (max-width:420px){.top .toplogo{width:132px}}
 .top .topright{justify-self:stretch;justify-content:flex-end;min-width:0}
 .top .who{max-width:100%}
+/* settings (v29) */
+.top .topleft{grid-column:1;justify-self:start;display:flex}
+.top .toplogo{grid-row:1}
+.gearbtn{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;padding:0;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.18);color:#fff}
+.gearbtn svg{width:20px;height:20px}
+.gearbtn[aria-pressed="true"]{background:var(--blue);border-color:var(--blue);color:#fff}
+.sethead{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 2px}
+.setrow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.setrow .t,.acct .t{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.setrow .val{font-weight:600;color:var(--muted);font-size:15px}
+.chev-r{font-size:22px;line-height:1;color:var(--muted)}
+.big-dot{width:42px;height:42px;font-size:16px}
+.appear{gap:8px}
+.seg{display:flex;gap:4px;background:var(--soft);border-radius:10px;padding:4px}
+.seg button{flex:1;border:0;background:none;border-radius:7px;padding:8px 4px;font-weight:600;color:var(--muted)}
+.seg button[aria-checked="true"]{background:var(--blue);color:var(--blue-ink);box-shadow:0 2px 6px rgba(31,79,209,.35)}
+.gearbtn[aria-pressed="true"]{background:#1f4fd1;border-color:#1f4fd1}

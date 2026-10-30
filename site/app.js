@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 28;
+const APP_VERSION = 29;
 const APP_DATE = "2026-10-30";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -528,21 +528,62 @@ function viewNotConfigured(){
 /* ---------- account + install ---------- */
 const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
-function openAccount(){
-  const m = me(); if (!m) return;
-  openSheet(
-    h("h2",{text:"Logged in as "+m.name}),
-    h("p",{class:"hint", text:((m.roles||[]).map(roleName).filter(Boolean).join(", ") || "No roles yet") + ". This device logs out by itself 16 hours after you log in."}),
+/* ---------- settings ---------- */
+const THEMES = [["auto","Automatic"],["light","Light"],["dark","Dark"]];
+function themeNow(){ try { const t = localStorage.getItem("brewskis.theme"); return t==="light"||t==="dark" ? t : "auto"; } catch(e){ return "auto"; } }
+function setTheme(t){
+  try { if (t==="auto") localStorage.removeItem("brewskis.theme"); else localStorage.setItem("brewskis.theme", t); } catch(e){}
+  if (t==="auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", t);
+  render();
+}
+function setRow(title, sub, value, onclick){
+  return h("button",{type:"button", class:"setrow", onclick},
+    h("span",{class:"t"}, h("b",{text:title}), sub ? h("span",{class:"hint", text:sub}) : null),
+    value ? h("span",{class:"val", text:value}) : null,
+    h("span",{class:"chev-r", "aria-hidden":"true", text:"›"}));
+}
+function viewSettings(){
+  const m = me(), admin = isAdmin();
+  checkPushOnce();
+  const pushOn = !!(S.push.sub && S.push.prefs);
+  const pushVal = !pushSupported() ? "Not available" : (typeof Notification!=="undefined" && Notification.permission==="denied") ? "Blocked" : !S.push.loaded ? "" : pushOn ? "On" : "Off";
+  const theme = themeNow();
+  const out = [h("div",{class:"rolehead"}, h("h2",{text:"Settings", style:"font-size:32px"}))];
+
+  out.push(h("section",{class:"stack"},
+    h("h3",{class:"sethead", text:"Account"}),
+    h("div",{class:"card acct"},
+      h("div",{class:"row", style:"justify-content:flex-start;gap:12px;flex-wrap:nowrap"},
+        h("span",{class:"dot big-dot", "aria-hidden":"true", text:initials(m.name)}),
+        h("span",{class:"t"}, h("b",{text:m.name}),
+          h("span",{class:"hint", text:(m.roles||[]).map(roleName).filter(Boolean).join(", ") || "No roles yet"}))),
+      h("p",{class:"hint", style:"margin:0", text:"This phone logs out by itself 16 hours after you log in."}),
+      h("button",{type:"button", class:"btn ghost", onclick:()=>logOut()},"Log out"))));
+
+  out.push(h("section",{class:"stack"},
+    h("h3",{class:"sethead", text:"This phone"}),
+    setRow("Notifications", admin ? "Coverage, new tasks, orders, overdue tasks, nightly recap" : "Shift coverage and new tasks", pushVal, ()=>openNotify()),
     h("label",{class:"soundrow", for:"soundToggle"},
       h("span",{}, h("b",{text:"Sounds"}), h("span",{class:"hint", text:"A soft tap on every button, a clink when you check off a task, and ticks when you count."+(navigator.vibrate ? " Includes a short vibration." : "")})),
-      h("input",{type:"checkbox", id:"soundToggle", class:"switch", role:"switch", checked:soundOn, onchange:e=>setSound(e.target.checked)})),
-    versionLine(),
-    updateReady() ? h("button",{type:"button", class:"btn", disabled:S.updating, onclick:()=>{ closeSheet(); applyUpdate(); }}, S.updating ? "Updating…" : "Update now") : null,
-    !isStandalone() ? installHelp() : null,
-    h("button",{type:"button", class:"btn ghost", onclick:()=>{ closeSheet(); openNotify(); }},"Notification settings"),
-    h("button",{type:"button", class:"btn", onclick:()=>logOut()},"Log out"),
-    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
+      h("input",{type:"checkbox", id:"soundToggle", class:"switch", role:"switch", checked:soundOn, onchange:e=>{ setSound(e.target.checked); render(); }})),
+    h("div",{class:"card appear"},
+      h("b",{id:"themeLbl", text:"Appearance"}),
+      h("div",{class:"seg", role:"radiogroup", "aria-labelledby":"themeLbl"},
+        THEMES.map(([id,label])=>h("button",{type:"button", role:"radio", "aria-checked":String(theme===id), onclick:()=>setTheme(id)}, label))),
+      h("span",{class:"hint", text: theme==="auto" ? "Follows your phone's light or dark mode." : "Always "+theme+" on this phone."}))));
+
+  if (admin) out.push(h("section",{class:"stack"},
+    h("h3",{class:"sethead", text:"Managers"}),
+    setRow("Team, roles & login numbers", "Add people, change roles, set login numbers", "", ()=>{ go("team"); loadVersions(); })));
+
+  out.push(h("section",{class:"stack"},
+    h("h3",{class:"sethead", text:"App"}),
+    h("div",{class:"card"}, versionLine(),
+      updateReady() ? h("button",{type:"button", class:"btn", disabled:S.updating, onclick:applyUpdate}, S.updating ? "Updating…" : "Update now") : null),
+    !isStandalone() ? installHelp() : null));
+  return out;
 }
+
 /* ---------- manager notifications ---------- */
 const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 function b64uToBytes(str){ const pad = "=".repeat((4 - str.length % 4) % 4); const raw = atob((str + pad).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(raw, c=>c.charCodeAt(0)); }
@@ -2036,6 +2077,8 @@ function render(){
   $("installBtn").hidden = !S.installEvent || !S.session;
   const m = me(), loggedIn = !!(S.session && m);
   $("whoBtn").hidden = !loggedIn;
+  $("settingsBtn").hidden = !loggedIn;
+  $("settingsBtn").setAttribute("aria-pressed", String(S.view==="settings" || (S.view==="notify" && S.notifyBack==="settings")));
   $("whoName").textContent = loggedIn ? m.name + (m.manager ? " · Mgr" : "") : "";
   $("whoDot").textContent = loggedIn ? initials(m.name) : "?";
   $("tabs").hidden = !loggedIn;
@@ -2048,14 +2091,14 @@ function render(){
     $("tabTeam").hidden = !admin;
     if (!admin && S.view==="team") S.view = "overview";
     const tv = S.view==="notify" ? (S.notifyBack || "overview") : S.view;
-    const tab = tv==="team" ? "team" : tv==="inventory" ? "inventory" : tv==="schedule" ? "schedule" : tv==="events" ? "events" : "shifts";
+    const tab = tv==="settings" ? "settings" : tv==="team" ? "team" : tv==="inventory" ? "inventory" : tv==="schedule" ? "schedule" : tv==="events" ? "events" : "shifts";
     $("tabSched").setAttribute("aria-pressed", String(tab==="schedule"));
     $("tabSched").classList.toggle("has-dot", forYouShifts().length > 0);
     $("tabShifts").setAttribute("aria-pressed", String(tab==="shifts"));
     $("tabInv").setAttribute("aria-pressed", String(tab==="inventory"));
     $("tabEvents").setAttribute("aria-pressed", String(tab==="events"));
     $("tabTeam").setAttribute("aria-pressed", String(tab==="team"));
-    kids = S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : S.view==="schedule" ? viewSchedule() : S.view==="events" ? viewEvents() : viewOverview();
+    kids = S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : S.view==="settings" ? viewSettings() : S.view==="schedule" ? viewSchedule() : S.view==="events" ? viewEvents() : viewOverview();
   }
   const active = document.activeElement, aid = active && active.id;
   let sel = null; try { if (aid && active.selectionStart != null) sel = [active.selectionStart, active.selectionEnd]; } catch(e){}
@@ -2065,7 +2108,8 @@ function render(){
 }
 
 /* ---------- wiring ---------- */
-$("whoBtn").addEventListener("click", openAccount);
+$("whoBtn").addEventListener("click", ()=>go("settings"));
+$("settingsBtn").addEventListener("click", ()=>go(S.view==="settings" ? (S.settingsBack || "overview") : (S.settingsBack = S.view, "settings")));
 $("installBtn").addEventListener("click", install);
 $("updateBtn").addEventListener("click", applyUpdate);
 $("tabShifts").addEventListener("click", ()=>go("overview"));
