@@ -1,5 +1,5 @@
 {
-  "version": 22,
+  "version": 23,
   "date": "2026-10-30",
-  "notes": "Tasks tab: one list of the tasks that matter, with starred important ones on top. Daily role checklists are gone."
+  "notes": "Alerts for new tasks: the people a task is for get a notification when a manager adds it."
 }

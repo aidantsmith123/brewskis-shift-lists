@@ -513,3 +513,4 @@ button.divider.fold{display:block;width:100%;text-align:left;border:0;border-top
 .sumleft.over{background:var(--danger);color:#fff}
 .star-toggle{font-weight:600}
 .star-toggle input{accent-color:var(--gold-deep)}
+.tasks-alert{align-self:flex-start;font-size:14px;color:var(--blue);margin-top:-4px}

@@ -345,6 +345,7 @@ begin
   values (rid, trim(p_text), (select id from staff where id = nullif(p_assignee,'')), rep, dd, _clean_time(p_due_time),
           case when rep = 'monthly' then extract(day from dd)::int end, coalesce(p_important, false), me.id, me.name);
   perform _log(me, 'added', trim(p_text), coalesce(rname, 'Tasks'));
+  perform _push_kick();   -- tell the people it's for right away
 end $$;
 
 -- Change a task (managers). p_role_id '-' and p_important null keep what's there (older app versions don't send them).
@@ -605,11 +606,11 @@ $$;
 
 -- Settings with defaults filled in and junk thrown out.
 create or replace function _push_prefs(p jsonb) returns jsonb language plpgsql immutable as $$
-declare d jsonb := '{"orders":true,"lead_hours":2,"overdue":true,"out":true,"summary":true,"swaps":true,"coverage":true,"summary_time":"09:00","quiet":true,"quiet_start":"00:00","quiet_end":"08:00"}';
+declare d jsonb := '{"orders":true,"lead_hours":2,"overdue":true,"out":true,"summary":true,"swaps":true,"coverage":true,"tasks":true,"summary_time":"09:00","quiet":true,"quiet_start":"00:00","quiet_end":"08:00"}';
         r jsonb := d; k text;
 begin
   p := coalesce(p, '{}');
-  foreach k in array array['orders','overdue','out','summary','swaps','coverage','quiet'] loop
+  foreach k in array array['orders','overdue','out','summary','swaps','coverage','tasks','quiet'] loop
     if jsonb_typeof(p->k) = 'boolean' then r := jsonb_set(r, array[k], p->k); end if;
   end loop;
   if jsonb_typeof(p->'lead_hours') = 'number' then r := jsonb_set(r, '{lead_hours}', to_jsonb(least(greatest((p->>'lead_hours')::numeric::int, 1), 48))); end if;
@@ -724,7 +725,7 @@ declare tz text := 'America/New_York'; lnow timestamp := p_now at time zone tz; 
         sup suppliers; nx timestamptz; n_low int;
         r record; ov_title text[]; ov_body text[]; os_title text[]; os_body text[];
         total int; done_n int; missed text[]; n_over int; n_out int; body text; st time; due_now boolean;
-        endpoint_key text; quiet boolean; sw text[]; cv text[]; mgr boolean;
+        endpoint_key text; quiet boolean; sw text[]; cv text[]; mgr boolean; nt text[]; nt_star boolean;
 begin
   delete from push_sent where sent_at < p_now - interval '45 days';
   -- everyone who turned notifications on gets coverage alerts; the rest is for managers
@@ -858,6 +859,38 @@ begin
         out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
           'title', array_length(sw, 1) || ' shifts covered', 'body', array_to_string(sw[1:3], '. ') || case when array_length(sw,1) > 3 then '…' else '' end,
           'url', './#schedule', 'tag', 'swap');
+      end if;
+    end if;
+
+    -- 7. new tasks for this person: assigned to them, for one of their roles, or for everyone (not ones they added)
+    if (p->>'tasks')::boolean and not quiet then
+      nt := '{}'; nt_star := false;
+      for r in select tk.id, tk.text, tk.important, tk.repeat, tk.due_date, tk.due_time, tk.assignee from tasks tk
+                where tk.added_at > p_now - interval '24 hours' and tk.added_at > sub.created_at - interval '1 hour'
+                  and tk.added_by is distinct from sub.staff_id and not tk.done
+                  and case when tk.assignee is not null then tk.assignee = sub.staff_id
+                           when tk.role_id is not null then tk.role_id = any(sub.sroles)
+                           else true end
+                order by tk.important desc, tk.added_at loop
+        k := 'task:' || endpoint_key || ':' || r.id;
+        insert into push_sent(key) values (k) on conflict do nothing; get diagnostics rc = row_count;
+        continue when rc = 0;
+        nt_star := nt_star or r.important;
+        nt := nt || (case when r.important then '★ ' else '' end || r.text ||
+                     case when r.repeat = 'daily' then ' · every day'
+                          when r.due_date is not null and r.due_time is not null then ' · due ' || _fmt_due(_deadline(r.due_date, r.due_time), p_now)
+                          when r.due_date is not null then ' · due ' || case r.due_date - today when 0 then 'today' when 1 then 'tomorrow'
+                                                                         else to_char(r.due_date, 'Dy Mon FMDD') end
+                          else '' end ||
+                     case when r.assignee = sub.staff_id then ' · for you' else '' end);
+      end loop;
+      if array_length(nt, 1) = 1 then
+        out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
+          'title', case when nt_star then 'New important task' else 'New task' end, 'body', nt[1], 'url', './', 'tag', 'task');
+      elsif array_length(nt, 1) > 1 then
+        out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
+          'title', array_length(nt, 1) || ' new tasks', 'body', array_to_string(nt[1:3], '. ') || case when array_length(nt,1) > 3 then '…' else '' end,
+          'url', './', 'tag', 'task');
       end if;
     end if;
 

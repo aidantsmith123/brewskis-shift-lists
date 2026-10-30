@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 22;
+const APP_VERSION = 23;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -631,12 +631,14 @@ function viewNotify(){
       h("h3",{text:"Get alerts on this phone"}),
       mgr ? h("ul",{class:"steps"},
         h("li",{text:"Shifts that need coverage, and when someone covers one"}),
+        h("li",{text:"New tasks for you, your role, or everyone"}),
         h("li",{text:"Order deadlines coming up that haven't been ordered"}),
         h("li",{text:"Tasks that go overdue, and items counted at zero"}),
         h("li",{text:"A recap of each shift day's tasks"}))
       : h("ul",{class:"steps"},
         h("li",{text:"Right away when a shift you can work needs coverage"}),
-        h("li",{text:"When someone covers your shift"})),
+        h("li",{text:"When someone covers your shift"}),
+        h("li",{text:"New tasks for you, your role, or everyone"})),
       h("button",{type:"button", class:"btn", disabled:S.push.busy, onclick:enablePush}, S.push.busy ? "Turning on…" : "Turn on notifications")));
     return out;
   }
@@ -644,7 +646,8 @@ function viewNotify(){
   const timeInput = (id, key) => h("input",{type:"time", id, value:p[key], disabled:S.push.busy, onchange:e=>{ if (e.target.value) updatePush({[key]:e.target.value}); }});
   const coverRows = [
     prefRow("coverage", "Shifts that need coverage", mgr ? "Every coverage request and open shift, right away." : "Right away, when a shift you can work needs someone."),
-    prefRow("swaps", "Shifts covered", mgr ? "When someone covers a shift." : "When someone covers your shift, or one you were told about.")];
+    prefRow("swaps", "Shifts covered", mgr ? "When someone covers a shift." : "When someone covers your shift, or one you were told about."),
+    prefRow("tasks", "New tasks", mgr ? "When another manager adds a task for everyone, your role, or you." : "When a manager adds a task for you, your role, or everyone.")];
   if (!mgr) out.push(h("div",{class:"card prefs"}, ...coverRows,
     prefRow("quiet", "Quiet hours", "Alerts wait until quiet hours end.",
       h("div",{class:"inline"}, h("label",{class:"lbl", for:"pfQs"}, "From", timeInput("pfQs","quiet_start")), h("label",{class:"lbl", for:"pfQe"}, "To", timeInput("pfQe","quiet_end"))))));
@@ -662,7 +665,7 @@ function viewNotify(){
   out.push(h("div",{class:"inline"},
     h("button",{type:"button", class:"btn", disabled:S.push.busy, onclick:testPush},"Send a test"),
     h("button",{type:"button", class:"btn ghost", disabled:S.push.busy, onclick:disablePush},"Turn off on this phone")));
-  out.push(h("p",{class:"hint", text: mgr ? "Coverage alerts go out right away. Other alerts are checked every 15 minutes." : "Coverage alerts go out right away."}));
+  out.push(h("p",{class:"hint", text: mgr ? "Coverage and new-task alerts go out right away. Other alerts are checked every 15 minutes." : "Alerts go out right away."}));
   return out;
 }
 function installHelp(){
@@ -841,6 +844,8 @@ function viewOverview(){
 
   out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{text:"Tasks", style:"font-size:32px"}),
     admin && canWrite() && !S.addingTask ? h("button",{type:"button", class:"btn small", onclick:()=>{ S.addingTask = true; render(); $("newTask")?.focus(); }},"Add task") : null));
+  checkPushOnce();
+  if (S.push.loaded && !(S.push.sub && S.push.prefs)) out.push(h("button",{type:"button", class:"linkbtn alertlink tasks-alert", onclick:openNotify},"🔔 Get alerts on this phone when new tasks are added"));
   if (admin && S.addingTask) out.push(addTaskForm());
 
   if (!all.length){
