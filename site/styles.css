@@ -514,3 +514,77 @@ button.divider.fold{display:block;width:100%;text-align:left;border:0;border-top
 .star-toggle{font-weight:600}
 .star-toggle input{accent-color:var(--gold-deep)}
 .tasks-alert{align-self:flex-start;font-size:14px;color:var(--blue);margin-top:-4px}
+
+/* ---------- Events (v24) ---------- */
+:root{--ev-party:#a8700a; --ev-party-soft:#fdf0cc; --ev-ent:#6a3fd0; --ev-ent-soft:#ece5fd; --ev-std:#1f4fd1; --ev-std-soft:#e1e9fd; --ev-other:#59617f; --ev-other-soft:#e5e9f4}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ev-party:#f5c04a; --ev-party-soft:#3a2e10; --ev-ent:#b49cff; --ev-ent-soft:#2a1f4d; --ev-std:#8fb0ff; --ev-std-soft:#18234a; --ev-other:#9aa3c4; --ev-other-soft:#1c2238}}
+:root[data-theme="dark"]{--ev-party:#f5c04a; --ev-party-soft:#3a2e10; --ev-ent:#b49cff; --ev-ent-soft:#2a1f4d; --ev-std:#8fb0ff; --ev-std-soft:#18234a; --ev-other:#9aa3c4; --ev-other-soft:#1c2238}
+.ev-party{--k:var(--ev-party);--ks:var(--ev-party-soft)} .ev-entertainment{--k:var(--ev-ent);--ks:var(--ev-ent-soft)}
+.ev-standard{--k:var(--ev-std);--ks:var(--ev-std-soft)} .ev-other{--k:var(--ev-other);--ks:var(--ev-other-soft)}
+.tag[class*="ev-"]{background:var(--ks);color:var(--k)}
+button.tag.evlink{border:0;cursor:pointer}
+
+.evhero{display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;text-align:left;border:0;border-radius:16px;padding:18px;color:#fff;
+  background:linear-gradient(135deg,var(--blue-deep),var(--blue));box-shadow:0 10px 24px -14px var(--blue)}
+.evhero.ev-entertainment{background:linear-gradient(135deg,#3b1f8f,#7448e0);box-shadow:0 10px 24px -14px #6a3fd0}
+.evhero.ev-party{background:linear-gradient(135deg,#8a5a06,#e0a21f);box-shadow:0 10px 24px -14px #a8700a}
+.evhero.ev-other{background:linear-gradient(135deg,#2b3150,#59617f);box-shadow:0 10px 24px -14px #2b3150}
+.evhero .eyebrow{color:var(--gold)}
+.evhero.ev-party .eyebrow{color:#fff3cf}
+.evhero .evtitle{font-family:var(--display);font-weight:800;font-size:30px;line-height:1;text-transform:uppercase;letter-spacing:.01em;overflow-wrap:anywhere}
+.evhero .evwhen{font-weight:600;color:rgba(255,255,255,.88)}
+.evhero .line{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}
+.evhero .tag{background:rgba(255,255,255,.18);color:#fff}
+.evhero .more{font-size:13px;color:rgba(255,255,255,.8)}
+
+.calmonth{gap:12px}
+.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.calwd{text-align:center;font-size:12px;font-weight:700;color:var(--muted);padding-bottom:4px}
+.calday{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:3px;min-height:46px;padding:6px 0 4px;border:0;background:none;border-radius:10px}
+.calday .num{width:28px;height:28px;display:grid;place-items:center;border-radius:50%;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.calday.out{opacity:.38}
+.calday.past .num{color:var(--muted);font-weight:500}
+.calday.today .num{box-shadow:inset 0 0 0 2px var(--blue);color:var(--blue);font-weight:800}
+.calday.sel{background:var(--soft)}
+.calday.sel .num{background:var(--blue);color:var(--blue-ink);box-shadow:none}
+.calday .dots{display:flex;gap:3px;height:6px}
+.calday .dots i,.legend i{display:block;width:6px;height:6px;border-radius:50%;background:var(--k)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{width:8px;height:8px}
+.calpanel{border-top:1px solid var(--line);padding-top:12px;gap:8px}
+
+.evlist{display:flex;flex-direction:column;gap:8px}
+.evlist .divider{border:0;background:none;padding:6px 2px 0}
+.evrow{display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:start;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-left:5px solid var(--k);border-radius:12px;padding:10px 12px}
+.evrow.past{opacity:.7}
+.evdate{display:flex;flex-direction:column;align-items:center;line-height:1.05;padding:4px 0;border-radius:8px;background:var(--ks);color:var(--k)}
+.evdate b{font-family:var(--display);font-size:24px;font-weight:800}
+.evdate small{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.evbody{display:flex;flex-direction:column;gap:4px;min-width:0}
+.evname{font-weight:700;font-size:16.5px;overflow-wrap:anywhere}
+.evbody .line{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.evnote{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.evnotes{margin:0;white-space:pre-wrap}
+
+.kindpick{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.kindopt{position:relative;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card);cursor:pointer;font-weight:600}
+.kindopt input{position:absolute;opacity:0;pointer-events:none}
+.kindopt .ki{width:28px;height:28px;display:grid;place-items:center;border-radius:8px;background:var(--ks);flex:none}
+.kindopt:has(input:checked){border-color:var(--k);box-shadow:inset 0 0 0 1px var(--k);background:var(--ks)}
+.kindopt:has(input:focus-visible){outline:2px solid var(--blue);outline-offset:2px}
+.promohint{background:var(--ev-ent-soft);border-radius:12px;padding:12px 14px;font-size:14.5px}
+.promohint ul{margin:6px 0 0;padding-left:18px}
+.promohint li.past{color:var(--muted);text-decoration:line-through}
+.promo{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;gap:8px}
+.promorow{display:flex;gap:10px;align-items:center}
+.promorow.done .check{background:var(--done);border-color:var(--done)}
+.promorow.done .check svg{opacity:1}
+.promorow.over .check{border-color:var(--danger)}
+.promorow.over .hint{color:var(--danger)}
+.evstrip{background:linear-gradient(135deg,#3b1f8f,#7448e0)}
+.evhero{background:linear-gradient(135deg,#13328f,#1f4fd1);box-shadow:0 10px 24px -14px #1f4fd1}
+.evsheet-title{font-size:34px;line-height:1;overflow-wrap:anywhere}
+.evsheet-when{display:flex;flex-direction:column;gap:2px;font-size:17px}
+.evsheet-when span{color:var(--muted);font-size:15px}
+fieldset.choices legend.lbl{font-size:13px;font-weight:600;color:var(--muted);padding:0}

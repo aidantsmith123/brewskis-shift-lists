@@ -3,8 +3,8 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 23;
-const APP_DATE = "2026-10-29";
+const APP_VERSION = 24;
+const APP_DATE = "2026-10-30";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
 const CACHE_KEY = "brewskis.state";
@@ -33,7 +33,7 @@ const S = {
   newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
-  invQuery:"", invSup:null, open:loadOpen(), fx:{}, week:null, weekCache:{},
+  invQuery:"", invSup:null, open:loadOpen(), fx:{}, week:null, weekCache:{}, evMonth:null, evDay:null,
   latest:null, versions:null, versionsAt:0, helloAt:0, updating:false,
   installEvent:null, push:{loaded:false, sub:null, prefs:null, busy:false, err:""}
 };
@@ -228,7 +228,7 @@ function when(iso){
   return d.toDateString()===now.toDateString() ? t : d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+", "+t;
 }
 function initials(n){ return (n||"?").trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase() || "?"; }
-const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], shifts:[], covers:[], log:[], me:null};
+const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], shifts:[], covers:[], events:[], log:[], me:null};
 const me = () => D().me;
 const isAdmin = () => !!(me() && me().manager);
 const canWrite = () => !!me() && !S.offline;
@@ -831,6 +831,7 @@ function viewOverview(){
       h("div",{class:"big"}, String(p.done), h("small",{text:" of "+p.total})),
       h("div",{class:"sumlabel", text: p.total ? (p.done===p.total ? "Everything due today is done" : "tasks due today are done") : "Nothing due today"}),
       overAll ? h("div",{class:"sumleft over", text:overAll+" overdue"}) : p.total && p.done < p.total ? h("div",{class:"sumleft", text:(p.total-p.done)+" to go"}) : null)));
+  const es = eventStrip(); if (es) out.push(es);
   const ns = nextShiftStrip(); if (ns) out.push(ns);
   if (admin && d.suppliers.length){
     const next = suppliersByDeadline().find(x=>x.d && !x.ordered);
@@ -883,7 +884,7 @@ function activitySection(){
   const admin = isAdmin();
   const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked", shift_posted:" asked for coverage on %", shift_taken:" is covering %"};
   /* staff only see activity from their side of the pub, plus inventory counts */
-  const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); ok.add("Tasks"); return place=>ok.has(place); })();
+  const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); ok.add("Tasks"); ok.add("Events"); return place=>ok.has(place); })();
   const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place||""}));
   let shown = ev;
   const q = admin ? S.actQuery.trim().toLowerCase() : "";
@@ -992,6 +993,7 @@ function taskRow(t){
         h("div",{class:"line"},
           role ? h("span",{class:"tag "+role.section, text:role.name}) : h("span",{class:"tag plain", text:"Everyone"}),
           t.assignee ? h("span",{class:"tag plain", text:"For "+staffName(t.assignee)}) : null,
+          t.event_id && eventById(t.event_id) ? h("button",{type:"button", class:"tag ev-entertainment evlink", onclick:()=>{ const e = eventById(t.event_id); go("events"); if (e) openEventSheet(e); }},"🎤 See event") : null,
           t.repeat!=="once" ? h("span",{class:"tag plain", text:repeatLabel(t)}) : null,
           due ? h("span",{class:"due-line "+due.cls, text:due.text}) : null),
         done ? h("div",{class:"line ok", text:"✓ Done by "+doneName(t)+" · "+when(t.done_at)}) : null,
@@ -1705,6 +1707,202 @@ function viewTeam(){
   return out;
 }
 
+/* ---------- Events ---------- */
+const EVENT_KINDS = [["party","Party","🎉"],["entertainment","Entertainment","🎤"],["standard","Standard","📅"],["other","Other","✦"]];
+const kindInfo = k => EVENT_KINDS.find(x=>x[0]===k) || EVENT_KINDS[3];
+const PROMO_LEADS = [[14,"2 weeks before"],[7,"1 week before"],[1,"Day before"]];
+const eventById = id => (D().events||[]).find(e=>e.id===id);
+const promoTasks = e => D().tasks.filter(t=>t.event_id===e.id).sort((a,b)=>(b.event_lead||0)-(a.event_lead||0));
+function kindTag(k){ const [id,label,icon] = kindInfo(k); return h("span",{class:"tag ev-"+id}, icon+" "+label); }
+function eventTime(e){
+  if (!e.start_time) return e.end_time ? "Until "+fmtClock(e.end_time) : "";
+  return fmtClock(e.start_time) + (e.end_time ? " – "+fmtClock(e.end_time) : "");
+}
+function eventWhen(e){
+  const today = shiftDay(), diff = Math.round((parseDay(e.day) - parseDay(today))/86400e3);
+  if (diff===0) return e.start_time && Number(hhmm(e.start_time).slice(0,2)) >= 16 ? "Tonight" : "Today";
+  if (diff===1) return "Tomorrow";
+  if (diff > 1 && diff < 7) return "This "+parseDay(e.day).toLocaleDateString(undefined,{weekday:"long"});
+  if (diff >= 7 && diff < 14) return "Next "+parseDay(e.day).toLocaleDateString(undefined,{weekday:"long"});
+  if (diff > 0) return "In "+diff+" days";
+  return "";
+}
+const promoDue = str => { const f = fmtDue(str); return /^(today|tomorrow)$/.test(f) ? f : parseDay(str).toLocaleDateString(undefined,{weekday:"short", month:"short", day:"numeric"}); };
+const longDay = str => parseDay(str).toLocaleDateString(undefined,{weekday:"long", month:"long", day:"numeric"});
+const upcomingEvents = () => (D().events||[]).filter(e=>e.day >= shiftDay());
+
+function viewEvents(){
+  const admin = isAdmin(), out = [], today = shiftDay(), all = D().events||[];
+  if (!S.evMonth) S.evMonth = today.slice(0,7);
+  const up = upcomingEvents();
+
+  out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{text:"Events", style:"font-size:32px"}),
+    admin && canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>openEventForm(null, S.evDay && S.evDay >= today ? S.evDay : null)},"Add event") : null));
+
+  /* next up */
+  const next = up[0];
+  if (next) out.push(h("button",{type:"button", class:"evhero ev-"+next.kind, onclick:()=>openEventSheet(next)},
+    h("span",{class:"eyebrow", text:"Next up · "+eventWhen(next)}),
+    h("span",{class:"evtitle", text:next.title}),
+    h("span",{class:"evwhen", text:[parseDay(next.day).toLocaleDateString(undefined,{weekday:"short", month:"short", day:"numeric"}), eventTime(next)].filter(Boolean).join(" · ")}),
+    h("span",{class:"line"}, kindTag(next.kind), up.length > 1 ? h("span",{class:"more", text:"+"+(up.length-1)+" more coming up"}) : null)));
+  else out.push(emptyCard("Nothing on the calendar", admin
+    ? "Add parties, live music, trivia, game days and anything else coming up. Entertainment events get promotion reminders for managers."
+    : "When a manager adds an event, it shows up here."));
+
+  out.push(calendarCard(all));
+
+  /* upcoming list */
+  if (up.length){
+    let lastMonth = "";
+    const rows = [];
+    for (const e of up.slice(0, 40)){
+      const m = e.day.slice(0,7);
+      if (m!==lastMonth){ lastMonth = m; rows.push(h("div",{class:"divider", text:parseDay(e.day).toLocaleDateString(undefined,{month:"long", year: m.slice(0,4)===today.slice(0,4) ? undefined : "numeric"})})); }
+      rows.push(eventRow(e));
+    }
+    out.push(h("section",{class:"stack"},
+      h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"Coming up"}), h("span",{class:"tag plain", text:up.length+(up.length===1?" event":" events")})),
+      h("div",{class:"evlist"}, rows)));
+  }
+  return out;
+}
+function calendarCard(all){
+  const today = shiftDay(), [y,m] = S.evMonth.split("-").map(Number);
+  const first = new Date(y, m-1, 1), start = new Date(y, m-1, 1 - first.getDay());
+  const byDay = {}; for (const e of all) (byDay[e.day] = byDay[e.day] || []).push(e);
+  const step = n => { const d = new Date(y, m-1+n, 1); S.evMonth = d.getFullYear()+"-"+pad(d.getMonth()+1); S.evDay = null; render(); };
+  const weeks = Math.ceil((first.getDay() + new Date(y, m, 0).getDate())/7);
+  const grid = h("div",{class:"calgrid", role:"grid"},
+    ["S","M","T","W","T","F","S"].map((d,i)=>h("span",{class:"calwd", "aria-hidden":"true", text:d})));
+  for (let i=0;i<weeks*7;i++){
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate()+i), key = ymd(d), list = byDay[key] || [];
+    const label = d.toLocaleDateString(undefined,{weekday:"long", month:"long", day:"numeric"}) + (list.length ? ", "+list.length+(list.length===1?" event":" events") : "");
+    grid.append(h("button",{type:"button", class:"calday"+(d.getMonth()!==m-1?" out":"")+(key===today?" today":"")+(S.evDay===key?" sel":"")+(key<today?" past":""),
+        "aria-label":label, "aria-pressed":String(S.evDay===key), onclick:()=>{ S.evDay = S.evDay===key ? null : key; render(); }},
+      h("span",{class:"num", text:String(d.getDate())}),
+      list.length ? h("span",{class:"dots", "aria-hidden":"true"}, list.slice(0,3).map(e=>h("i",{class:"ev-"+e.kind}))) : null));
+  }
+  let dayPanel = null;
+  if (S.evDay){
+    const list = byDay[S.evDay] || [];
+    dayPanel = h("div",{class:"calpanel stack"},
+      h("div",{class:"row"}, h("b",{text:longDay(S.evDay)}),
+        h("button",{type:"button", class:"linkbtn", "aria-label":"Close this day", onclick:()=>{ S.evDay = null; render(); }},"Close")),
+      list.length ? h("div",{class:"evlist"}, list.map(eventRow)) : h("p",{class:"hint", style:"margin:0", text:"Nothing planned."}),
+      isAdmin() && canWrite() && S.evDay >= today ? h("button",{type:"button", class:"btn ghost small", style:"align-self:flex-start", onclick:()=>openEventForm(null, S.evDay)},"+ Add an event on this day") : null);
+  }
+  const thisMonth = today.slice(0,7);
+  return h("div",{class:"card calmonth"},
+    h("div",{class:"weeknav"},
+      h("button",{type:"button", class:"btn ghost small", "aria-label":"Previous month", onclick:()=>step(-1)},"‹"),
+      h("div",{class:"weeklabel"}, h("b",{text:first.toLocaleDateString(undefined,{month:"long", year:"numeric"})}),
+        S.evMonth!==thisMonth ? h("button",{type:"button", class:"linkbtn", onclick:()=>{ S.evMonth = thisMonth; S.evDay = null; render(); }},"Back to this month") : h("span",{class:"hint", text:"This month"})),
+      h("button",{type:"button", class:"btn ghost small", "aria-label":"Next month", onclick:()=>step(1)},"›")),
+    grid,
+    h("div",{class:"legend", "aria-hidden":"true"}, EVENT_KINDS.map(([id,label])=>h("span",{}, h("i",{class:"ev-"+id}), label))),
+    dayPanel);
+}
+function eventRow(e){
+  const d = parseDay(e.day), promo = e.kind==="entertainment" && isAdmin() ? promoTasks(e) : [];
+  const done = promo.filter(isDone).length, overdue = promo.filter(isOverdue).length;
+  return h("button",{type:"button", class:"evrow ev-"+e.kind+(e.day < shiftDay() ? " past" : ""), onclick:()=>openEventSheet(e)},
+    h("span",{class:"evdate", "aria-hidden":"true"},
+      h("small",{text:d.toLocaleDateString(undefined,{weekday:"short"})}), h("b",{text:String(d.getDate())}), h("small",{text:d.toLocaleDateString(undefined,{month:"short"})})),
+    h("span",{class:"evbody"},
+      h("span",{class:"evname", text:e.title}),
+      h("span",{class:"line"}, kindTag(e.kind),
+        eventTime(e) ? h("span",{class:"hint", text:eventTime(e)}) : null,
+        promo.length ? h("span",{class:"tag "+(overdue ? "warn" : done===promo.length ? "ok" : "plain"), text: overdue ? "Promotion overdue" : "Promoted "+done+" of "+promo.length}) : null),
+      e.notes ? h("span",{class:"hint evnote", text:e.notes}) : null));
+}
+function openEventSheet(e){
+  const admin = isAdmin(), promo = e.kind==="entertainment" ? promoTasks(e) : [];
+  const kids = [
+    h("div",{class:"line"}, kindTag(e.kind), eventWhen(e) ? h("span",{class:"hint", text:eventWhen(e)}) : null),
+    h("h2",{class:"evsheet-title", text:e.title}),
+    h("div",{class:"evsheet-when"}, h("b",{text:longDay(e.day)}), eventTime(e) ? h("span",{text:eventTime(e)}) : null),
+    e.notes ? h("p",{class:"evnotes", text:e.notes}) : null];
+  if (admin && e.kind==="entertainment"){
+    kids.push(h("div",{class:"stack promo"},
+      h("b",{text:"Promotion"}),
+      promo.length ? promo.map(t=>h("div",{class:"promorow"+(isDone(t)?" done":"")+(isOverdue(t)?" over":"")},
+          h("button",{type:"button", class:"check", "data-own-sound":"", "aria-pressed":isDone(t)?"true":"false", "aria-label":(isDone(t)?"Uncheck ":"Check off ")+t.text, disabled:!canWrite(),
+            onclick:async ()=>{ await toggleTask(t); const fresh = eventById(e.id); if (fresh && !$("sheet").hidden) openEventSheet(fresh); }}, h("span",{}, svgCheck())),
+          h("span",{}, h("span",{text:(PROMO_LEADS.find(x=>x[0]===t.event_lead)||[0,"Promote"])[1]}),
+            h("span",{class:"hint", text: isDone(t) ? " · done by "+doneName(t) : " · due "+promoDue(t.due_date)+(isOverdue(t)?" (overdue)":"")}))))
+        : h("p",{class:"hint", style:"margin:0", text: e.day < shiftDay() ? "This event has passed." : "Too close to the event for the promotion reminders."})));
+  }
+  kids.push(h("p",{class:"hint", style:"margin:0", text:"Added by "+(e.added_by_name || "a manager")}));
+  if (admin && canWrite()) kids.push(h("div",{class:"inline"},
+    h("button",{type:"button", class:"btn ghost small", onclick:()=>{ closeSheet(); openEventForm(e); }},"Edit event"),
+    h("button",{type:"button", class:"linkbtn warn", id:"delEventBtn", onclick:ev=>{
+      if (ev.target.dataset.armed){ closeSheet(); act("api_remove_event",{p_id:e.id},"Event removed"); }
+      else { ev.target.dataset.armed = "1"; ev.target.textContent = e.kind==="entertainment" && promo.length ? "Tap again: remove it and its promotion tasks" : "Tap again to remove"; } }},"Remove event")));
+  kids.push(h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Close"));
+  openSheet(...kids);
+}
+/* managers: add or change an event */
+function openEventForm(e, dateStr){
+  const today = shiftDay();
+  let kind = e ? e.kind : "standard";
+  const title = h("input",{type:"text", id:"evTitle", maxlength:"120", placeholder:"e.g. Eagles watch party", value:e ? e.title : ""});
+  const date = h("input",{type:"date", id:"evDate", value:e ? e.day : (dateStr || today)});
+  const st = h("input",{type:"time", id:"evStart", value:e ? hhmm(e.start_time) : ""});
+  const en = h("input",{type:"time", id:"evEnd", value:e ? hhmm(e.end_time) : ""});
+  const notes = h("textarea",{id:"evNotes", rows:"3", maxlength:"1000", placeholder:"Band, host, menu specials, setup, who's working it…"}, e ? e.notes : "");
+  const promoHint = h("div",{class:"promohint"});
+  const showPromo = () => {
+    promoHint.hidden = kind!=="entertainment";
+    if (kind!=="entertainment" || !date.value) return promoHint.replaceChildren();
+    promoHint.replaceChildren(
+      h("b",{text:"🎤 Promotion reminders for managers"}),
+      h("ul",{}, PROMO_LEADS.map(([n,label])=>{ const due = addDays(date.value, -n), past = due < today;
+        return h("li",{class:past?"past":""}, label+": "+parseDay(due).toLocaleDateString(undefined,{weekday:"short", month:"short", day:"numeric"})+(past ? " (already passed, skipped)" : "")); })));
+  };
+  date.addEventListener("change", showPromo); date.addEventListener("input", showPromo);
+  const kinds = h("div",{class:"kindpick", role:"radiogroup", "aria-label":"Type of event"},
+    EVENT_KINDS.map(([id,label,icon])=>h("label",{class:"kindopt ev-"+id},
+      h("input",{type:"radio", name:"evKind", value:id, checked:kind===id, onchange:()=>{ kind = id; showPromo(); }}),
+      h("span",{class:"ki", "aria-hidden":"true", text:icon}), h("span",{text:label}))));
+  showPromo();
+  const err = h("p",{class:"loginerr", role:"alert"});
+  openSheet(
+    h("h2",{text:e ? "Edit event" : "Add event"}),
+    h("label",{class:"lbl", for:"evTitle"}, "What's happening", title),
+    h("fieldset",{class:"choices"}, h("legend",{class:"lbl", text:"Type"}), kinds),
+    h("label",{class:"lbl", for:"evDate"}, "Date", date),
+    h("div",{class:"inline"}, h("label",{class:"lbl", for:"evStart", style:"flex:1"}, "Starts (optional)", st), h("label",{class:"lbl", for:"evEnd", style:"flex:1"}, "Ends (optional)", en)),
+    h("label",{class:"lbl", for:"evNotes"}, "Details (optional)", notes),
+    promoHint,
+    err,
+    h("button",{type:"button", class:"btn", onclick:async ev=>{
+      if (!title.value.trim()){ err.textContent = "Give the event a name."; title.focus(); return; }
+      if (!date.value){ err.textContent = "Pick a date."; return; }
+      ev.target.disabled = true; err.textContent = "";
+      try {
+        await call("api_save_event",{p_id:e ? e.id : null, p_title:title.value, p_kind:kind, p_day:date.value, p_start:st.value||null, p_end:en.value||null, p_notes:notes.value});
+        closeSheet(); play("ok");
+        const n = kind==="entertainment" && !e ? PROMO_LEADS.filter(([n])=>addDays(date.value,-n) >= today).length : 0;
+        toast(e ? "Event saved" : n ? "Event added, plus "+n+" promotion "+(n===1?"task":"tasks")+" for managers" : "Event added");
+        S.evMonth = date.value.slice(0,7); S.evDay = null;
+        await refresh();
+      } catch(x){ if (x.code==="not_logged_in") return logOut("You've been logged out. Enter your number again."); err.textContent = errMsg(x); ev.target.disabled = false; }
+    }}, e ? "Save" : "Add event"),
+    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
+  if (!e) title.focus();
+}
+/* Tasks tab: a heads-up when an event is today or tomorrow */
+function eventStrip(){
+  const today = shiftDay(), soon = upcomingEvents().filter(e=>e.day <= addDays(today,1));
+  if (!soon.length) return null;
+  const e = soon[0], same = soon.filter(x=>x.day===e.day).length;
+  return h("button",{type:"button", class:"strip evstrip", onclick:()=>{ go("events"); openEventSheet(e); }},
+    h("span",{class:"t"}, h("span",{class:"eyebrow", text:eventWhen(e)+(same > 1 ? " · +"+(same-1)+" more" : "")}),
+      h("span",{style:"font-weight:700", text:e.title}), eventTime(e) ? h("span",{class:"due", text:eventTime(e)}) : null),
+    h("span",{class:"tag ok", text:kindInfo(e.kind)[2]+" "+kindInfo(e.kind)[1]}));
+}
+
 /* ---------- render ---------- */
 function renderOffline(){
   const el = $("offline");
@@ -1735,13 +1933,14 @@ function render(){
     $("tabTeam").hidden = !admin;
     if (!admin && S.view==="team") S.view = "overview";
     const tv = S.view==="notify" ? (S.notifyBack || "overview") : S.view;
-    const tab = tv==="team" ? "team" : tv==="inventory" ? "inventory" : tv==="schedule" ? "schedule" : "shifts";
+    const tab = tv==="team" ? "team" : tv==="inventory" ? "inventory" : tv==="schedule" ? "schedule" : tv==="events" ? "events" : "shifts";
     $("tabSched").setAttribute("aria-pressed", String(tab==="schedule"));
     $("tabSched").classList.toggle("has-dot", forYouShifts().length > 0);
     $("tabShifts").setAttribute("aria-pressed", String(tab==="shifts"));
     $("tabInv").setAttribute("aria-pressed", String(tab==="inventory"));
+    $("tabEvents").setAttribute("aria-pressed", String(tab==="events"));
     $("tabTeam").setAttribute("aria-pressed", String(tab==="team"));
-    kids = S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : S.view==="schedule" ? viewSchedule() : viewOverview();
+    kids = S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : S.view==="schedule" ? viewSchedule() : S.view==="events" ? viewEvents() : viewOverview();
   }
   const active = document.activeElement, aid = active && active.id;
   let sel = null; try { if (aid && active.selectionStart != null) sel = [active.selectionStart, active.selectionEnd]; } catch(e){}
@@ -1758,6 +1957,7 @@ $("tabShifts").addEventListener("click", ()=>go("overview"));
 $("tabInv").addEventListener("click", ()=>go("inventory"));
 $("tabTeam").addEventListener("click", ()=>{ go("team"); loadVersions(); });
 $("tabSched").addEventListener("click", ()=>go("schedule"));
+$("tabEvents").addEventListener("click", ()=>go("events"));
 document.addEventListener("keydown", e=>{
   if (S.session || !document.querySelector(".keypad") || e.target.matches("input,select,textarea")) return;
   if (/^\d$/.test(e.key)) pressKey(e.key); else if (e.key==="Backspace") pressKey("del"); else if (e.key==="Enter") pressKey("go");
@@ -1808,8 +2008,9 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
   }
   if (location.hash==="#inventory") S.view = "inventory";   // opened from an order or out-of-stock notification
   if (location.hash==="#schedule") S.view = "schedule";     // opened from a shift swap notification
+  if (location.hash==="#events") S.view = "events";
   render();
   if (S.session && configured()) refresh();
   checkLatest(true);
 })();
-window.addEventListener("hashchange", ()=>{ if (!S.session) return; if (location.hash==="#inventory") go("inventory"); if (location.hash==="#schedule") go("schedule"); });
+window.addEventListener("hashchange", ()=>{ if (!S.session) return; if (location.hash==="#inventory") go("inventory"); if (location.hash==="#schedule") go("schedule"); if (location.hash==="#events") go("events"); });

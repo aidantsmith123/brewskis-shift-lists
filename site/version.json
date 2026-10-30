@@ -1,5 +1,5 @@
 {
-  "version": 23,
+  "version": 24,
   "date": "2026-10-30",
-  "notes": "Alerts for new tasks: the people a task is for get a notification when a manager adds it."
+  "notes": "New Events tab: a calendar of what's coming up. Entertainment events give managers reminders to promote them."
 }
