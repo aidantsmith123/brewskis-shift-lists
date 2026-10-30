@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 20;
+const APP_VERSION = 21;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -228,7 +228,7 @@ function when(iso){
   return d.toDateString()===now.toDateString() ? t : d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+", "+t;
 }
 function initials(n){ return (n||"?").trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase() || "?"; }
-const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], shifts:[], log:[], me:null};
+const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], shifts:[], covers:[], log:[], me:null};
 const me = () => D().me;
 const isAdmin = () => !!(me() && me().manager);
 const canWrite = () => !!me() && !S.offline;
@@ -539,7 +539,7 @@ function openAccount(){
     versionLine(),
     updateReady() ? h("button",{type:"button", class:"btn", disabled:S.updating, onclick:()=>{ closeSheet(); applyUpdate(); }}, S.updating ? "Updating…" : "Update now") : null,
     !isStandalone() ? installHelp() : null,
-    m.manager ? h("button",{type:"button", class:"btn ghost", onclick:()=>{ closeSheet(); openNotify(); }},"Notification settings") : null,
+    h("button",{type:"button", class:"btn ghost", onclick:()=>{ closeSheet(); openNotify(); }},"Notification settings"),
     h("button",{type:"button", class:"btn", onclick:()=>logOut()},"Log out"),
     h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
 }
@@ -547,7 +547,7 @@ function openAccount(){
 const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 function b64uToBytes(str){ const pad = "=".repeat((4 - str.length % 4) % 4); const raw = atob((str + pad).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(raw, c=>c.charCodeAt(0)); }
 const functionsUrl = () => CFG.supabaseUrl.replace(/\/$/,"") + "/functions/v1/notify";
-function openNotify(){ S.view = "notify"; S.push.err = ""; render(); window.scrollTo(0,0); loadPush(); }
+function openNotify(){ S.notifyBack = S.view==="notify" ? S.notifyBack : S.view; S.view = "notify"; S.push.err = ""; render(); window.scrollTo(0,0); loadPush(); }
 async function loadPush(){
   if (!pushSupported() || Notification.permission==="denied"){ S.push.loaded = true; return render(); }
   try {
@@ -607,11 +607,11 @@ function prefRow(key, title, desc, extra){
     on && extra ? h("div",{class:"prefextra"}, extra) : null);
 }
 function viewNotify(){
-  if (!isAdmin()){ S.view = "overview"; return viewOverview(); }
+  const mgr = isAdmin();
   const out = [h("div",{class:"rolehead"},
-    h("button",{type:"button", class:"back", onclick:()=>go("overview")},"← Back"),
+    h("button",{type:"button", class:"back", onclick:()=>go(S.notifyBack || "overview")},"← Back"),
     h("h2",{text:"Notifications", style:"font-size:32px"}),
-    h("p",{class:"hint", text:"These settings are for this phone only. Each manager turns notifications on on their own phone."}))];
+    h("p",{class:"hint", text:"These settings are for this phone only. Everyone turns notifications on on their own phone."}))];
   if (!pushSupported()){
     out.push(isIOS() && !isStandalone()
       ? h("div",{class:"card"}, h("h3",{text:"Add the app to your home screen first"}),
@@ -629,23 +629,32 @@ function viewNotify(){
   if (!S.push.sub || !S.push.prefs){
     out.push(h("div",{class:"card"},
       h("h3",{text:"Get alerts on this phone"}),
-      h("ul",{class:"steps"},
+      mgr ? h("ul",{class:"steps"},
+        h("li",{text:"Shifts that need coverage, and when someone covers one"}),
         h("li",{text:"Order deadlines coming up that haven't been ordered"}),
         h("li",{text:"Tasks that go overdue, and items counted at zero"}),
-        h("li",{text:"Shift swaps, and a recap of each shift day's checklists"})),
+        h("li",{text:"A recap of each shift day's checklists"}))
+      : h("ul",{class:"steps"},
+        h("li",{text:"Right away when a shift you can work needs coverage"}),
+        h("li",{text:"When someone covers your shift"})),
       h("button",{type:"button", class:"btn", disabled:S.push.busy, onclick:enablePush}, S.push.busy ? "Turning on…" : "Turn on notifications")));
     return out;
   }
   const p = S.push.prefs;
   const timeInput = (id, key) => h("input",{type:"time", id, value:p[key], disabled:S.push.busy, onchange:e=>{ if (e.target.value) updatePush({[key]:e.target.value}); }});
-  out.push(h("div",{class:"card prefs"},
+  const coverRows = [
+    prefRow("coverage", "Shifts that need coverage", mgr ? "Every coverage request and open shift, right away." : "Right away, when a shift you can work needs someone."),
+    prefRow("swaps", "Shifts covered", mgr ? "When someone covers a shift." : "When someone covers your shift, or one you were told about.")];
+  if (!mgr) out.push(h("div",{class:"card prefs"}, ...coverRows,
+    prefRow("quiet", "Quiet hours", "Alerts wait until quiet hours end.",
+      h("div",{class:"inline"}, h("label",{class:"lbl", for:"pfQs"}, "From", timeInput("pfQs","quiet_start")), h("label",{class:"lbl", for:"pfQe"}, "To", timeInput("pfQe","quiet_end"))))));
+  else out.push(h("div",{class:"card prefs"}, ...coverRows,
     prefRow("orders", "Order deadlines", "Before a supplier's cutoff, if that order hasn't been marked placed.",
       h("label",{class:"lbl", for:"pfLead"}, "Remind me",
         h("select",{id:"pfLead", disabled:S.push.busy, onchange:e=>updatePush({lead_hours:Number(e.target.value)})},
           [[1,"1 hour before"],[2,"2 hours before"],[4,"4 hours before"],[24,"1 day before"]].map(([v,l])=>h("option",{value:v, selected:Number(p.lead_hours)===v}, l))))),
     prefRow("overdue", "Overdue tasks", "When a task passes its due date or due time without being checked off. One alert per task."),
     prefRow("out", "Out of stock", "When someone counts an item at 0."),
-    prefRow("swaps", "Shift swaps", "When someone picks up a coworker's shift or an open shift."),
     prefRow("summary", "Nightly recap", "How many checklist tasks got done in the shift day that just ended, and what was missed.",
       h("label",{class:"lbl", for:"pfRecap"}, "Send at", timeInput("pfRecap","summary_time"))),
     prefRow("quiet", "Quiet hours", "Alerts wait until quiet hours end. The recap still arrives at the time you picked.",
@@ -653,7 +662,7 @@ function viewNotify(){
   out.push(h("div",{class:"inline"},
     h("button",{type:"button", class:"btn", disabled:S.push.busy, onclick:testPush},"Send a test"),
     h("button",{type:"button", class:"btn ghost", disabled:S.push.busy, onclick:disablePush},"Turn off on this phone")));
-  out.push(h("p",{class:"hint", text:"Alerts are checked every 15 minutes, so they can arrive up to 15 minutes after something happens."}));
+  out.push(h("p",{class:"hint", text: mgr ? "Coverage alerts go out right away. Other alerts are checked every 15 minutes." : "Coverage alerts go out right away."}));
   return out;
 }
 function installHelp(){
@@ -848,7 +857,7 @@ function viewOverview(){
 
 function activitySection(){
   const admin = isAdmin();
-  const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked", shift_posted:" put up a shift for grabs: %", shift_taken:" picked up a shift: %"};
+  const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked", shift_posted:" asked for coverage on %", shift_taken:" is covering %"};
   /* staff only see activity from their side of the pub, plus inventory counts */
   const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); return place=>ok.has(place); })();
   const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place||""}));
@@ -1316,15 +1325,16 @@ const forYouShifts = () => (S.data ? D().shifts.filter(s=>!takeBlocker(s, true))
 function nextShiftStrip(){
   const now = new Date();
   const next = myShifts().filter(s=>shiftEndDate(s) > now).sort((a,b)=>a.start_at.localeCompare(b.start_at))[0];
-  const grabs = forYouShifts().length;
-  if (!next && !grabs) return null;
+  const need = forYouShifts().length;
+  if (!next && !need) return null;
   const r = next && roleOfShift(next);
-  return h("button",{type:"button", class:"strip nextshift", onclick:()=>go("schedule")},
+  return h("button",{type:"button", class:"strip nextshift"+(need?" needcover":""), onclick:()=>go("schedule")},
     h("span",{class:"t"},
-      h("span",{class:"eyebrow", text: next ? (new Date(next.start_at) <= now ? "You're on now" : "Your next shift") : "Shifts up for grabs"}),
-      next ? h("span",{style:"font-weight:700", text:shiftDayLabel2(next.start_at)+" · "+shiftRange(next)}) : h("span",{style:"font-weight:700", text:"Pick up extra hours"}),
-      next && r ? h("span",{class:"due", text:r.name + (next.up_for_grabs ? " · up for grabs" : "")}) : null),
-    grabs ? h("span",{class:"tag warn", text:grabs+(grabs===1?" up for grabs":" up for grabs")}) : null);
+      h("span",{class:"eyebrow", text: next ? (new Date(next.start_at) <= now ? "You're on now" : "Your next shift") : "Coverage needed"}),
+      next ? h("span",{style:"font-weight:700", text:shiftDayLabel2(next.start_at)+" · "+shiftRange(next)})
+           : h("span",{style:"font-weight:700", text: need===1 ? "A shift needs someone. Can you cover it?" : need+" shifts need someone. Can you cover one?"}),
+      next && r ? h("span",{class:"due", text:r.name + (next.up_for_grabs ? " · asked for coverage" : "")}) : null),
+    need ? h("span",{class:"tag warn", text:need+" need"+(need===1?"s":"")+" coverage"}) : null);
 }
 /* which shifts to show for a week: from the app's data when it covers that week, otherwise ask the server */
 function shiftsForWeek(ws){
@@ -1346,44 +1356,89 @@ function shiftRow(s){
       h("span",{class:"sname", text:whoOf(s)}),
       h("span",{class:"smeta"},
         r ? h("span",{class:"tag "+r.section, text:r.name}) : null,
-        s.up_for_grabs ? h("span",{class:"tag "+(canTake?"warn":"plain"), text: canTake ? "Up for grabs" : "Up for grabs"}) : null,
+        s.up_for_grabs ? h("span",{class:"tag "+(canTake||mine?"warn":"plain"), text:"Needs coverage"}) : null,
         s.note ? h("span",{class:"hint", text:s.note}) : null)));
 }
+/* turn on coverage alerts: check this phone once, quietly, the first time the Schedule tab opens */
+function coverAlertsOn(){ return !!(S.push.sub && S.push.prefs && S.push.prefs.coverage); }
+function checkPushOnce(){
+  if (S.push.loaded || S.push.checking) return;
+  S.push.checking = true; loadPush().finally(()=>{ S.push.checking = false; });
+}
+function coverCard(s){
+  const m = me(), r = roleOfShift(s), mine = s.staff_id===m.id, blocker = takeBlocker(s), ck = "take:"+s.id, rk = "rm:"+s.id;
+  const who = mine ? "You asked for coverage" : s.staff_id ? staffName(s.staff_id)+" needs someone" : "Open shift, nobody's on it yet";
+  let action;
+  if (mine) action = h("div",{class:"stack", style:"gap:8px"},
+    h("p",{class:"hint", text:"It's still your shift until someone covers it."}),
+    h("div",{class:"inline"},
+      h("button",{type:"button", class:"btn ghost small", onclick:()=>act("api_unpost_shift",{p_id:s.id},"Got it. You're working it.")},"I'll work it"),
+      s.created_by===m.id ? (S.confirm===rk
+          ? h("button",{type:"button", class:"btn ghost small", onclick:()=>{ S.confirm=null; act("api_delete_shift",{p_id:s.id},"Request removed"); }},"Tap again to remove")
+          : h("button",{type:"button", class:"linkbtn", onclick:()=>askConfirm(rk)},"Remove request")) : null));
+  else if (!blocker) action = S.confirm===ck
+    ? h("button",{type:"button", class:"btn", "data-own-sound":"", onclick:()=>takeShift(s)},"Tap again to cover it")
+    : h("button",{type:"button", class:"btn ghost", onclick:()=>askConfirm(ck)},"I'll cover it");
+  else action = h("p",{class:"hint cantcover", text: blocker==="role" ? "Needs a "+(r ? r.name.toLowerCase() : "different role")+"." : blocker==="overlap" ? "You're working then." : ""});
+  return h("div",{class:"card covercard"+(mine?" mine-req":"")+(!blocker&&!mine?" can":"")},
+    h("div",{class:"covtop"},
+      h("div",{class:"covwhen"}, h("b",{text:shiftDayLabel2(s.start_at)}), h("span",{text:shiftRange(s)})),
+      r ? h("span",{class:"tag "+r.section, text:r.name}) : null),
+    h("p",{class:"covwho"}, h("b",{text:who}), s.posted_note ? h("span",{class:"hint", text:" “"+s.posted_note+"”"}) : null),
+    action);
+}
+function coveredRow(c){
+  const m = me(), r = roleById(c.role_id);
+  const to = c.to_staff===m.id ? "You're" : c.to_name+" is";
+  const from = c.from_staff===m.id ? "you" : c.from_staff ? c.from_name : "an open shift";
+  return h("div",{class:"covrow"+(c.to_staff===m.id||c.from_staff===m.id?" me":"")},
+    h("span",{class:"covicon", "aria-hidden":"true"},"✓"),
+    h("span",{class:"t"},
+      h("b",{text:to+" covering "+from}),
+      h("span",{class:"hint", text:shiftDayLabel2(c.start_at)+" · "+shiftRange(c)+(r ? " · "+r.name : "")})));
+}
 function viewSchedule(){
-  const admin = isAdmin(), out = [];
+  const admin = isAdmin(), out = [], now = new Date();
   const thisWeek = mondayOf(shiftDay());
   if (!S.week) S.week = thisWeek;
   const ws = S.week, wsd = parseDay(ws), wed = new Date(wsd.getTime() + 6*86400e3);
   const fmtD = d => d.toLocaleDateString([], {month:"short", day:"numeric"});
   const shifts = shiftsForWeek(ws);
   const step = n => { const d = parseDay(S.week); d.setDate(d.getDate()+7*n); S.week = ymd(d); render(); };
-  out.push(h("div",{class:"rolehead"},
-    h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"Schedule", style:"font-size:32px"}),
+  checkPushOnce();
+
+  /* coverage first */
+  const open = D().shifts.filter(s=>s.up_for_grabs && new Date(s.start_at) > now).sort((a,b)=>a.start_at.localeCompare(b.start_at));
+  const canDo = open.filter(s=>!takeBlocker(s)).length;
+  out.push(h("div",{class:"rolehead"}, h("h2",{text:"Schedule", style:"font-size:32px"})));
+  out.push(h("div",{class:"card coverhero"},
+    h("div",{class:"eyebrow", text:"Shift coverage"}),
+    h("h3",{text:"Can't make a shift?"}),
+    h("p",{class:"hint", text:"Ask for coverage and everyone who can work it hears about it right away. It stays your shift until someone covers it."}),
+    h("button",{type:"button", class:"btn", onclick:openCoverForm},"Ask for coverage"),
+    S.push.loaded && !coverAlertsOn() ? h("button",{type:"button", class:"linkbtn alertlink", onclick:openNotify},"🔔 Get coverage alerts on this phone") : null));
+
+  out.push(h("section",{class:"stack"},
+    h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"Needs coverage"}),
+      open.length ? h("span",{class:"tag warn", text:open.length+(open.length===1?" shift":" shifts")}) : null),
+    open.length ? open.map(coverCard)
+                : h("div",{class:"card allcovered"}, h("span",{class:"covicon", "aria-hidden":"true"},"✓"), h("span",{text:"Every shift is covered right now."})),
+    open.some(s=>s.staff_id!==me().id) && !canDo && !admin ? h("p",{class:"hint", text:"Nothing here you can pick up. You'll get an alert when a shift you can work needs someone."}) : null));
+
+  const covers = (D().covers||[]).filter(c=>new Date(c.start_at) > new Date(now.getTime() - 12*3600e3)).slice(0, 12);
+  if (covers.length) out.push(h("section",{class:"stack"},
+    h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"Covered"})),
+    h("div",{class:"covlist"}, covers.map(coveredRow))));
+
+  /* the full schedule */
+  out.push(h("div",{class:"stack schedhead"},
+    h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"Full schedule"}),
       admin ? h("button",{type:"button", class:"btn small", onclick:()=>openShiftForm(null, ws===thisWeek ? shiftDay() : ws)},"Add shift") : null),
     h("div",{class:"weeknav"},
       h("button",{type:"button", class:"btn ghost small", "aria-label":"Previous week", onclick:()=>step(-1)},"‹"),
       h("div",{class:"weeklabel"}, h("b",{text:fmtD(wsd)+" – "+fmtD(wed)}), h("span",{class:"hint", text: ws===thisWeek ? "This week" : ws > thisWeek ? "Upcoming" : "Past week"})),
       h("button",{type:"button", class:"btn ghost small", "aria-label":"Next week", onclick:()=>step(1)},"›")),
     ws!==thisWeek ? h("button",{type:"button", class:"back", onclick:()=>{ S.week = thisWeek; render(); }},"← Back to this week") : null));
-
-  /* up for grabs, across all upcoming weeks */
-  const grabs = takeableShifts().sort((a,b)=>a.start_at.localeCompare(b.start_at));
-  const mineUp = myShifts().filter(s=>s.up_for_grabs && new Date(s.start_at) > new Date());
-  if (grabs.length || mineUp.length){
-    out.push(h("section",{class:"stack"},
-      h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"Up for grabs"}), grabs.length ? h("span",{class:"tag warn", text:grabs.length+(grabs.length===1?" shift":" shifts")}) : null),
-      grabs.map(s=>{ const r = roleOfShift(s), ck = "take:"+s.id;
-        return h("div",{class:"card grabcard"},
-          h("div",{class:"row"}, h("h3",{text:shiftDayLabel2(s.start_at)+" · "+shiftRange(s)}), r ? h("span",{class:"tag "+r.section, text:r.name}) : null),
-          h("p",{class:"hint", text:(s.staff_id ? staffName(s.staff_id)+" is giving this shift away." : "Open shift, nobody's on it yet.")+(s.posted_note ? " “"+s.posted_note+"”" : "")}),
-          S.confirm===ck ? h("button",{type:"button", class:"btn", "data-own-sound":"", onclick:()=>takeShift(s)},"Tap again to take it")
-                         : h("button",{type:"button", class:"btn ghost", onclick:()=>askConfirm(ck)},"Take this shift"));
-      }),
-      mineUp.map(s=>h("div",{class:"card mygrab"},
-        h("div",{class:"row"}, h("h3",{text:shiftDayLabel2(s.start_at)+" · "+shiftRange(s)}), h("span",{class:"tag plain", text:"Your shift"})),
-        h("p",{class:"hint", text:"You put this up for grabs. It stays yours until a coworker takes it."}),
-        h("button",{type:"button", class:"btn ghost small", onclick:()=>act("api_unpost_shift",{p_id:s.id},"It's your shift again")},"Keep this shift")))));
-  }
 
   /* the week */
   if (shifts==null) out.push(h("p",{class:"hint", text:"Loading that week…"}));
@@ -1419,38 +1474,84 @@ function viewSchedule(){
 }
 async function takeShift(s){
   S.confirm = null;
-  if (await act("api_take_shift",{p_id:s.id}, "It's yours: "+shiftDayLabel2(s.start_at)+", "+shiftRange(s))) play("ok");
+  const who = s.staff_id ? staffName(s.staff_id)+"'s shift" : "the open shift";
+  if (await act("api_take_shift",{p_id:s.id}, "Thanks! You're covering "+who+": "+shiftDayLabel2(s.start_at)+", "+shiftRange(s))) play("ok");
 }
 function openShiftSheet(s){
   const m = me(), r = roleOfShift(s), mine = s.staff_id===m.id, future = new Date(s.start_at) > new Date(), blocker = takeBlocker(s);
-  const noteIn = h("input",{type:"text", id:"giveNote", maxlength:"120", placeholder:"Optional note, e.g. family thing"});
+  const noteIn = h("input",{type:"text", id:"giveNote", maxlength:"120", placeholder:"e.g. family thing"});
   const kids = [
     h("h2",{text:shiftDayLabel2(s.start_at)}),
     h("div",{class:"bigtime", text:shiftRange(s)}),
     h("p",{class:"hint", text:[whoOf(s), r && r.name, s.end_at ? null : "until close (2 AM)"].filter(Boolean).join(" · ")}),
     s.note ? h("p",{text:s.note}) : null,
-    s.up_for_grabs && s.posted_note ? h("p",{class:"hint", text:"Note: “"+s.posted_note+"”"}) : null];
+    s.up_for_grabs ? h("p",{}, h("span",{class:"tag warn", text:"Needs coverage"}), s.posted_note ? h("span",{class:"hint", text:"  “"+s.posted_note+"”"}) : null) : null];
   if (mine && future && !s.up_for_grabs) kids.push(
-    h("label",{class:"lbl", for:"giveNote"}, "Can't make it?", noteIn),
-    h("button",{type:"button", class:"btn", onclick:async ()=>{ closeSheet(); await act("api_post_shift",{p_id:s.id, p_note:noteIn.value}, "Your shift is up for grabs. It's still yours until someone takes it."); }},"Give this shift away"));
-  if (mine && s.up_for_grabs) kids.push(h("p",{class:"hint", text:"This shift is up for grabs. It stays yours until a coworker takes it."}),
-    h("button",{type:"button", class:"btn ghost", onclick:()=>{ closeSheet(); act("api_unpost_shift",{p_id:s.id},"It's your shift again"); }},"Keep this shift"));
+    h("label",{class:"lbl", for:"giveNote"}, "Can't make it? Add a note for your coworkers (optional)", noteIn),
+    h("button",{type:"button", class:"btn", onclick:async ()=>{ closeSheet(); await act("api_post_shift",{p_id:s.id, p_note:noteIn.value}, "Asked for coverage. Your coworkers have been told."); }},"Ask for coverage"));
+  if (mine && s.up_for_grabs) kids.push(h("p",{class:"hint", text:"You asked for coverage. It stays your shift until someone covers it."}),
+    h("button",{type:"button", class:"btn ghost", onclick:()=>{ closeSheet(); act("api_unpost_shift",{p_id:s.id},"Got it. You're working it."); }},"I'll work it"));
   if (s.up_for_grabs && !mine){
-    if (!blocker) kids.push(h("button",{type:"button", class:"btn", "data-own-sound":"", onclick:()=>{ closeSheet(); takeShift(s); }},"Take this shift"));
-    else if (blocker==="role") kids.push(h("p",{class:"hint", text:"Only people with the "+(r ? r.name : "right")+" role can take this shift."}));
+    if (!blocker) kids.push(h("button",{type:"button", class:"btn", "data-own-sound":"", onclick:()=>{ closeSheet(); takeShift(s); }},"I'll cover it"));
+    else if (blocker==="role") kids.push(h("p",{class:"hint", text:"Only people with the "+(r ? r.name : "right")+" role can cover this shift."}));
     else if (blocker==="overlap") kids.push(h("p",{class:"hint", text:"You're already working during this shift."}));
   }
   if (isAdmin()){
-    const ck = "delshift:"+s.id;
     kids.push(h("div",{class:"inline"},
       h("button",{type:"button", class:"btn ghost small", onclick:()=>{ closeSheet(); openShiftForm(s); }},"Edit shift"),
-      !mine && s.staff_id && future && !s.up_for_grabs ? h("button",{type:"button", class:"btn ghost small", onclick:()=>{ closeSheet(); act("api_post_shift",{p_id:s.id, p_note:""}, "Shift is up for grabs"); }},"Put up for grabs") : null,
+      !mine && s.staff_id && future && !s.up_for_grabs ? h("button",{type:"button", class:"btn ghost small", onclick:()=>{ closeSheet(); act("api_post_shift",{p_id:s.id, p_note:""}, "Asked for coverage on "+staffName(s.staff_id)+"'s shift"); }},"Ask for coverage") : null,
       h("button",{type:"button", class:"linkbtn warn", id:"delShiftBtn", onclick:e=>{
         if (e.target.dataset.armed){ closeSheet(); act("api_delete_shift",{p_id:s.id},"Shift deleted"); }
         else { e.target.dataset.armed = "1"; e.target.textContent = "Tap again to delete"; } }},"Delete shift")));
   }
   kids.push(h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Close"));
   openSheet(...kids);
+}
+/* anyone: ask for coverage on a shift on the schedule, or one that isn't on it yet */
+function openCoverForm(){
+  const m = me(), now = new Date();
+  const mine = myShifts().filter(s=>new Date(s.start_at) > now && !s.up_for_grabs).sort((a,b)=>a.start_at.localeCompare(b.start_at)).slice(0, 6);
+  const roles = (m.manager ? sortedRoles() : (m.roles||[]).map(roleById).filter(Boolean)).filter(r=>r.section!=="mgmt");
+  let pick = mine.length ? mine[0].id : "new";
+  const tomorrow = ymd(new Date(parseDay(shiftDay()).getTime() + 86400e3));
+  const role = h("select",{id:"cfRole"}, roles.map(r=>h("option",{value:r.id}, r.name)));
+  const date = h("input",{type:"date", id:"cfDate", value:tomorrow, min:ymd(now)});
+  const st = h("input",{type:"time", id:"cfStart", value:"17:00"});
+  const closeBox = h("input",{type:"checkbox", id:"cfClose", checked:true});
+  const en = h("input",{type:"time", id:"cfEnd", value:"23:00", disabled:true});
+  closeBox.addEventListener("change", ()=>{ en.disabled = closeBox.checked; });
+  const fields = h("div",{class:"stack covfields"},
+    roles.length > 1 ? h("label",{class:"lbl", for:"cfRole"}, "Role", role) : null,
+    h("label",{class:"lbl", for:"cfDate"}, "Date", date),
+    h("div",{class:"inline"}, h("label",{class:"lbl", for:"cfStart", style:"flex:1"}, "Starts", st), h("label",{class:"lbl", for:"cfEnd", style:"flex:1"}, "Ends", en)),
+    h("label",{class:"toggle", for:"cfClose"}, closeBox, "Until close (2 AM)"));
+  const choice = (val, title, sub) => h("label",{class:"choice"},
+    h("input",{type:"radio", name:"cfPick", value:val, checked:pick===val, onchange:()=>{ pick = val; fields.hidden = pick!=="new"; }}),
+    h("span",{}, h("b",{text:title}), sub ? h("span",{class:"hint", text:sub}) : null));
+  fields.hidden = pick!=="new";
+  const note = h("input",{type:"text", id:"cfNote", maxlength:"120", placeholder:"e.g. family thing"});
+  const err = h("p",{class:"loginerr", role:"alert"});
+  openSheet(
+    h("h2",{text:"Ask for coverage"}),
+    mine.length ? h("fieldset",{class:"choices"}, h("legend",{class:"lbl", text:"Which shift?"}),
+      mine.map(s=>{ const r = roleOfShift(s); return choice(s.id, shiftDayLabel2(s.start_at)+" · "+shiftRange(s), r ? r.name : ""); }),
+      choice("new", "A shift that's not on the schedule", "")) : h("p",{class:"hint", text:"Which shift do you need covered?"}),
+    fields,
+    h("label",{class:"lbl", for:"cfNote"}, "Note for your coworkers (optional)", note),
+    h("p",{class:"hint", text:"Everyone who can work it gets a notification. It stays your shift until someone covers it."}),
+    err,
+    h("button",{type:"button", class:"btn", onclick:async e=>{
+      e.target.disabled = true; err.textContent = "";
+      try {
+        if (pick!=="new") await call("api_post_shift",{p_id:pick, p_note:note.value});
+        else {
+          if (!date.value || !st.value){ err.textContent = "Pick a date and start time."; e.target.disabled = false; return; }
+          await call("api_request_cover",{p_role_id: role.value || null, p_date:date.value, p_start:st.value, p_end: closeBox.checked ? null : en.value, p_note:note.value});
+        }
+        closeSheet(); toast("Asked for coverage. Your coworkers have been told."); play("ok"); await refresh();
+      } catch(x){ err.textContent = errMsg(x); e.target.disabled = false; }
+    }},"Ask for coverage"),
+    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
 }
 function openShiftForm(s, dateStr){
   const d = D(), staffSorted = d.staff.slice().sort((a,b)=>a.name.localeCompare(b.name));
@@ -1636,7 +1737,8 @@ function render(){
     const admin = isAdmin();
     $("tabTeam").hidden = !admin;
     if (!admin && S.view==="team") S.view = "overview";
-    const tab = S.view==="team" ? "team" : S.view==="inventory" ? "inventory" : S.view==="schedule" ? "schedule" : "shifts";
+    const tv = S.view==="notify" ? (S.notifyBack || "overview") : S.view;
+    const tab = tv==="team" ? "team" : tv==="inventory" ? "inventory" : tv==="schedule" ? "schedule" : "shifts";
     $("tabSched").setAttribute("aria-pressed", String(tab==="schedule"));
     $("tabSched").classList.toggle("has-dot", forYouShifts().length > 0);
     $("tabShifts").setAttribute("aria-pressed", String(tab==="shifts"));
