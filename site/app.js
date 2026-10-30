@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 21;
+const APP_VERSION = 22;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -29,7 +29,7 @@ const INV_STARTERS = {
 const S = {
   session:null, data:null, dataAt:null, offline:!navigator.onLine, booting:true,
   view:"overview", roleId:null, filter:"all", invFilter:"all", invEdit:false, confirm:null,
-  draft:{text:"", assignee:"", repeat:"daily", due_date:"", due_time:""}, editTask:null, editDraft:null, newPerson:"", newRole:"", newRoleSection:"foh",
+  draft:{text:"", assignee:"", repeat:"once", due_date:"", due_time:"", role_id:"", important:false}, taskFilter:"all", addingTask:false, showDone:false, editTask:null, editDraft:null, newPerson:"", newRole:"", newRoleSection:"foh",
   newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
@@ -237,7 +237,7 @@ const roleName = id => (roleById(id)||{}).name || "";
 const staffById = id => D().staff.find(s=>s.id===id);
 const isManagerStaff = s => !!s && (s.roles||[]).some(id=>(roleById(id)||{}).section==="mgmt");
 /* ---------- task schedules ---------- */
-const REPEATS = [["daily","Every shift"],["weekly","Weekly"],["biweekly","Every 2 weeks"],["monthly","Monthly"],["once","Just once"]];
+const REPEATS = [["once","Just once"],["daily","Every day"],["weekly","Weekly"],["biweekly","Every 2 weeks"],["monthly","Monthly"]];
 const RECURRING = new Set(["weekly","biweekly","monthly"]);
 function parseDay(str){ const [y,m,d] = str.split("-").map(Number); return new Date(y, m-1, d); }
 function addDays(str, n){ const d = parseDay(str); d.setDate(d.getDate()+n); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
@@ -436,7 +436,7 @@ async function toggleTask(t){
                          done_by:me().id, done_by_name:me().name, done_at:new Date().toISOString()});
   S.fx.task = t.id;
   if (!isDone(t)) play("undo");
-  else { const rp = progressOf(roleTasks(t.role_id).filter(countsToday)); play(rp.total && rp.done===rp.total ? "cheers" : "clink"); }
+  else { const rp = progressOf(visibleTasks().filter(countsToday)); play(rp.total && rp.done===rp.total ? "cheers" : "clink"); }
   render();
   if (!(await act("api_toggle_task", {p_id:t.id}))){ Object.assign(t, before); render(); }
 }
@@ -633,7 +633,7 @@ function viewNotify(){
         h("li",{text:"Shifts that need coverage, and when someone covers one"}),
         h("li",{text:"Order deadlines coming up that haven't been ordered"}),
         h("li",{text:"Tasks that go overdue, and items counted at zero"}),
-        h("li",{text:"A recap of each shift day's checklists"}))
+        h("li",{text:"A recap of each shift day's tasks"}))
       : h("ul",{class:"steps"},
         h("li",{text:"Right away when a shift you can work needs coverage"}),
         h("li",{text:"When someone covers your shift"})),
@@ -655,7 +655,7 @@ function viewNotify(){
           [[1,"1 hour before"],[2,"2 hours before"],[4,"4 hours before"],[24,"1 day before"]].map(([v,l])=>h("option",{value:v, selected:Number(p.lead_hours)===v}, l))))),
     prefRow("overdue", "Overdue tasks", "When a task passes its due date or due time without being checked off. One alert per task."),
     prefRow("out", "Out of stock", "When someone counts an item at 0."),
-    prefRow("summary", "Nightly recap", "How many checklist tasks got done in the shift day that just ended, and what was missed.",
+    prefRow("summary", "Nightly recap", "How many tasks got checked off in the shift day that just ended, and what's overdue.",
       h("label",{class:"lbl", for:"pfRecap"}, "Send at", timeInput("pfRecap","summary_time"))),
     prefRow("quiet", "Quiet hours", "Alerts wait until quiet hours end. The recap still arrives at the time you picked.",
       h("div",{class:"inline"}, h("label",{class:"lbl", for:"pfQs"}, "From", timeInput("pfQs","quiet_start")), h("label",{class:"lbl", for:"pfQe"}, "To", timeInput("pfQe","quiet_end"))))));
@@ -812,21 +812,22 @@ function visibleSections(){
 }
 const canSeeRole = r => !!r && visibleSections().has(r.section);
 
+/* tasks this person sees: ones for everyone, plus ones for roles on their side of the pub */
+const visibleTasks = () => D().tasks.filter(t=>!t.role_id || canSeeRole(roleById(t.role_id)));
+const isMineTask = t => { const m = me(); return t.assignee ? t.assignee===m.id : (!t.role_id || (m.roles||[]).includes(t.role_id)); };
+const taskSort = (a,b)=>Number(!!b.important)-Number(!!a.important) || (taskDeadline(a)||Infinity)-(taskDeadline(b)||Infinity) || a.text.localeCompare(b.text);
+
 function viewOverview(){
   const out = [], d = D(), admin = isAdmin();
-  if (!d.roles.length) return [emptyCard("No roles set up yet", admin ? "Add roles on the Team tab. Each role gets its own checklist." : "A manager needs to set up the roles first.")];
-  const secs = visibleSections();
-  if (!secs.size) return [emptyCard("No role yet", "A manager needs to give you a role before your checklists show up here."), activitySection()];
-  const all = d.tasks.filter(t=>canSeeRole(roleById(t.role_id)) && countsToday(t));
-  const p = progressOf(all);
-  const myRoles = new Set(me().roles||[]);
-  const scope = admin || (secs.has("foh") && secs.has("boh")) ? "tasks done today, across every shift" : secs.has("foh") ? "front of house tasks done today" : "back of house tasks done today";
-  out.push(h("section",{class:"summary", "aria-label":"Today's progress: "+p.done+" of "+p.total+" tasks done"},
+  const all = visibleTasks();
+  const p = progressOf(all.filter(countsToday));
+  const overAll = all.filter(isOverdue).length;
+  out.push(h("section",{class:"summary", "aria-label":"Today's tasks: "+p.done+" of "+p.total+" done"},
     stein(p.pct),
     h("div",{class:"sumtext"},
       h("div",{class:"big"}, String(p.done), h("small",{text:" of "+p.total})),
-      h("div",{class:"sumlabel", text: p.total ? (p.done===p.total ? "Everything due today is done" : scope) : "Nothing due today. Open a role to add tasks."}),
-      p.total && p.done < p.total ? h("div",{class:"sumleft", text:(p.total-p.done)+" to go"}) : null)));
+      h("div",{class:"sumlabel", text: p.total ? (p.done===p.total ? "Everything due today is done" : "tasks due today are done") : "Nothing due today"}),
+      overAll ? h("div",{class:"sumleft over", text:overAll+" overdue"}) : p.total && p.done < p.total ? h("div",{class:"sumleft", text:(p.total-p.done)+" to go"}) : null)));
   const ns = nextShiftStrip(); if (ns) out.push(ns);
   if (admin && d.suppliers.length){
     const next = suppliersByDeadline().find(x=>x.d && !x.ordered);
@@ -837,29 +838,47 @@ function viewOverview(){
         h("span",{class:"tag "+(n?"warn":"ok"), text: n ? n+" to order" : "Nothing low"})));
     }
   }
-  for (const [sec, label, short] of SECTIONS){
-    if (!secs.has(sec)) continue;
-    const roles = sortedRoles(sec); if (!roles.length) continue;
-    out.push(h("section",{},
-      h("div",{class:"sec-head"}, h("h2",{class:"sec-"+sec, text:label}), h("span",{class:"tag "+sec, text:short})),
-      h("div",{class:"rows"}, roles.map(r=>{
-        const rp = progressOf(roleTasks(r.id).filter(countsToday)); const people = roleStaff(r.id).map(s=>s.name);
-        const over = roleTasks(r.id).filter(isOverdue).length;
-        return h("button",{type:"button", class:"role"+(myRoles.has(r.id)?" mine":""), onclick:()=>{ S.roleId=r.id; S.filter="all"; go("role"); }},
-          h("span",{class:"name", text:r.name + (myRoles.has(r.id) ? " · You" : "")}),
-          h("span",{class:"count"}, h("span",{text: rp.total ? rp.done+"/"+rp.total : "No tasks"}), rp.total ? bar(rp.pct, "role:"+r.id) : null),
-          h("span",{class:"people", text: (over ? over+" overdue · " : "") + (people.length ? people.join(", ") : "No one assigned")}));
-      }))));
+
+  out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{text:"Tasks", style:"font-size:32px"}),
+    admin && canWrite() && !S.addingTask ? h("button",{type:"button", class:"btn small", onclick:()=>{ S.addingTask = true; render(); $("newTask")?.focus(); }},"Add task") : null));
+  if (admin && S.addingTask) out.push(addTaskForm());
+
+  if (!all.length){
+    out.push(emptyCard("No tasks yet", admin
+      ? "Add the things worth keeping an eye on: deep cleans, repairs, inspections, deliveries, deadlines. Star the ones that matter most. Everyday open and close duties don't need to go here."
+      : "When a manager adds a task for you or your side of the pub, it shows up here."));
+    out.push(activitySection());
+    return out;
   }
+  const starred = all.filter(t=>t.important && !isDone(t)).length;
+  out.push(h("div",{class:"chips", role:"group", "aria-label":"Show"},
+    [["all","All tasks"],["mine","For me"],["important","★ Important"+(starred?" · "+starred:"")]].map(([id,label])=>
+      h("button",{type:"button", class:"chip", "aria-pressed":String(S.taskFilter===id), onclick:()=>{ S.taskFilter = id; render(); }}, label))));
+  let list = all;
+  if (S.taskFilter==="mine") list = list.filter(isMineTask);
+  if (S.taskFilter==="important") list = list.filter(t=>t.important);
+  const over = list.filter(isOverdue).sort(taskSort);
+  const today = list.filter(t=>bucket(t)==="now" && !isOverdue(t)).sort(taskSort);
+  const later = list.filter(t=>bucket(t)==="later").sort(taskSort);
+  const done = list.filter(t=>bucket(t)==="done").sort((a,b)=>String(b.done_at||"").localeCompare(String(a.done_at||"")));
+  const group = (title, items, cls) => items.length ? [h("div",{class:"divider"+(cls?" "+cls:""), text:title+" · "+items.length}), items.map(taskRow)] : [];
+  out.push(h("div",{class:"list"},
+    group("Overdue", over, "over"),
+    group("To do", today),
+    group("Coming up", later),
+    done.length ? h("button",{type:"button", class:"divider fold", "aria-expanded":String(S.showDone), onclick:()=>{ S.showDone = !S.showDone; render(); }},
+      "Done · "+done.length+(S.showDone ? "  ▾" : "  ▸")) : null,
+    S.showDone ? done.slice(0, 30).map(taskRow) : null,
+    !over.length && !today.length && !later.length && !(done.length && S.showDone)
+      ? h("div",{class:"task"}, h("span"), h("span",{class:"hint", text: S.taskFilter==="important" ? "No starred tasks open." : S.taskFilter==="mine" ? "Nothing open for you." : "All caught up."})) : null));
   out.push(activitySection());
   return out;
 }
-
 function activitySection(){
   const admin = isAdmin();
   const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked", shift_posted:" asked for coverage on %", shift_taken:" is covering %"};
   /* staff only see activity from their side of the pub, plus inventory counts */
-  const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); return place=>ok.has(place); })();
+  const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); ok.add("Tasks"); return place=>ok.has(place); })();
   const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place||""}));
   let shown = ev;
   const q = admin ? S.actQuery.trim().toLowerCase() : "";
@@ -885,7 +904,7 @@ function activitySection(){
   return sec;
 }
 
-function canEditTask(t){ const m = me(); return canWrite() && (isAdmin() || (!!t.added_by && t.added_by===m.id)); }
+function canEditTask(t){ return canWrite() && isAdmin(); }
 
 /* repeat, due date and due time pickers, shared by the add and edit forms */
 function scheduleFields(d, pre){
@@ -903,7 +922,7 @@ function scheduleFields(d, pre){
 }
 function scheduleHint(d){
   const t = d.due_time ? " by "+fmtClock(d.due_time) : "";
-  if (d.repeat==="daily") return "Due every shift"+t+". It's flagged overdue after that.";
+  if (d.repeat==="daily") return "Due every day"+t+". It's flagged overdue after that.";
   if (!d.due_date) return d.repeat==="once" ? "No due date: it stays on the list until someone checks it off." : "Pick the first due date.";
   const day = parseDay(d.due_date);
   const wd = day.toLocaleDateString(undefined,{weekday:"long"});
@@ -913,97 +932,70 @@ function scheduleHint(d){
   if (d.repeat==="monthly") return "Due on the "+ordinal(day.getDate())+" of every month"+t+", starting "+first+". Short months use their last day.";
   return "Due "+first+t+".";
 }
-function editTaskForm(t, role){
-  const d = S.editDraft, assignees = (roleStaff(role.id).length ? roleStaff(role.id) : D().staff).slice().sort((a,b)=>a.name.localeCompare(b.name));
+/* who a task can be for: people with that role, or anyone when it's for everyone */
+function assigneeOptions(roleId){ const pool = roleId ? roleStaff(roleId) : []; return (pool.length ? pool : D().staff).slice().sort((a,b)=>a.name.localeCompare(b.name)); }
+function taskFields(d, pre){
+  return [
+    h("label",{class:"lbl full", for:pre+"Text"}, "Task", h("input",{type:"text", id:pre+"Text", placeholder:"e.g. Deep clean the fryer", value:d.text, oninput:e=>d.text=e.target.value})),
+    h("label",{class:"toggle star-toggle full", for:pre+"Star"}, h("input",{type:"checkbox", id:pre+"Star", checked:!!d.important, onchange:e=>d.important=e.target.checked}), "★ Important (pinned to the top)"),
+    h("label",{class:"lbl", for:pre+"Role"}, "Who it's for",
+      h("select",{id:pre+"Role", onchange:e=>{ d.role_id = e.target.value; if (d.assignee && d.role_id && !roleStaff(d.role_id).some(p=>p.id===d.assignee)) d.assignee = ""; render(); }},
+        h("option",{value:"", selected:!d.role_id},"Everyone"),
+        sortedRoles().map(r=>h("option",{value:r.id, selected:d.role_id===r.id}, r.name)))),
+    h("label",{class:"lbl", for:pre+"Assignee"}, "Person (optional)",
+      h("select",{id:pre+"Assignee", onchange:e=>d.assignee=e.target.value},
+        h("option",{value:"", selected:!d.assignee}, d.role_id ? "Anyone in that role" : "Anyone"),
+        assigneeOptions(d.role_id).map(s=>h("option",{value:s.id, selected:d.assignee===s.id}, s.name)))),
+    scheduleFields(d, pre)];
+}
+function taskArgs(d){
+  return {p_text:d.text, p_assignee:d.assignee||null, p_repeat:d.repeat, p_due_date:d.repeat==="daily" ? null : (d.due_date||null),
+          p_due_time:d.due_time||null, p_role_id:d.role_id||"", p_important:!!d.important};
+}
+function addTaskForm(){
+  const d = S.draft;
+  return h("form",{class:"add", onsubmit:async e=>{ e.preventDefault(); if (!d.text.trim()) return;
+      if (RECURRING.has(d.repeat) && !d.due_date) return toast("Pick the first due date.");
+      const a = taskArgs(d);
+      if (await act("api_add_task",{p_role_id:a.p_role_id, p_text:a.p_text, p_assignee:a.p_assignee, p_repeat:a.p_repeat, p_due_date:a.p_due_date, p_due_time:a.p_due_time, p_important:a.p_important}, "Task added")){
+        S.draft = {text:"", assignee:"", repeat:"once", due_date:"", due_time:"", role_id:"", important:false}; S.addingTask = false; render(); } }},
+    taskFields(d, "new"),
+    h("div",{class:"inline full"},
+      h("button",{type:"submit", class:"btn small", disabled:!canWrite()},"Add task"),
+      h("button",{type:"button", class:"btn ghost small", onclick:()=>{ S.addingTask = false; render(); }},"Cancel")));
+}
+function editTaskForm(t){
+  const d = S.editDraft;
   return h("form",{class:"add edit-task", onsubmit:async e=>{ e.preventDefault(); if (!d.text.trim()) return;
-      if (d.repeat!=="daily" && d.repeat!=="once" && !d.due_date) return toast("Pick the first due date.");
-      if (await act("api_update_task",{p_id:t.id, p_text:d.text, p_assignee:d.assignee||null, p_repeat:d.repeat, p_due_date:d.repeat==="daily" ? null : (d.due_date||null), p_due_time:d.due_time||null},"Task updated")){ S.editTask = null; render(); } }},
-    h("label",{class:"lbl full", for:"edText"}, "Task", h("input",{type:"text", id:"edText", value:d.text, oninput:e=>d.text=e.target.value})),
-    h("label",{class:"lbl full", for:"edAssignee"}, "For",
-      h("select",{id:"edAssignee", onchange:e=>d.assignee=e.target.value},
-        h("option",{value:"", selected:!d.assignee},"Anyone on this shift"),
-        assignees.map(s=>h("option",{value:s.id, selected:d.assignee===s.id}, s.name)))),
-    scheduleFields(d, "ed"),
+      if (RECURRING.has(d.repeat) && !d.due_date) return toast("Pick the first due date.");
+      if (await act("api_update_task",{p_id:t.id, ...taskArgs(d)},"Task updated")){ S.editTask = null; render(); } }},
+    taskFields(d, "ed"),
     h("div",{class:"inline full"},
       h("button",{type:"submit", class:"btn small"},"Save"),
       h("button",{type:"button", class:"btn ghost small", onclick:()=>{ S.editTask = null; render(); }},"Cancel")));
 }
 
-function taskRow(t, role){
-  if (S.editTask===t.id && S.editDraft) return h("div",{class:"task editing"}, editTaskForm(t, role));
-  const done = isDone(t), over = isOverdue(t), due = dueLine(t), editable = canEditTask(t);
+function taskRow(t){
+  if (S.editTask===t.id && S.editDraft) return h("div",{class:"task editing"}, editTaskForm(t));
+  const role = roleById(t.role_id), done = isDone(t), over = isOverdue(t), due = dueLine(t), editable = canEditTask(t);
   const ck = "task:"+t.id;
-  return h("div",{class:"task"+(done?" done":"")+(over?" overdue":"")+(S.fx.task===t.id ? (done?" just-done":" just-undone") : "")},
+  return h("div",{class:"task"+(done?" done":"")+(over?" overdue":"")+(t.important?" important":"")+(S.fx.task===t.id ? (done?" just-done":" just-undone") : "")},
     h("button",{type:"button", class:"check", "data-own-sound":"", "aria-pressed":done?"true":"false", "aria-label":(done?"Uncheck ":"Check off ")+t.text, disabled:!canWrite(), onclick:()=>toggleTask(t)}, h("span",{}, svgCheck())),
     h("div",{style:"min-width:0"},
-      h("div",{class:"text", text:t.text}),
+      h("div",{class:"text"}, t.important ? h("span",{class:"star", "aria-label":"Important", title:"Important"},"★ ") : null, t.text),
       h("div",{class:"tmeta"},
         h("div",{class:"line"},
-          h("span",{class:"tag plain", text:repeatLabel(t)}),
-          t.assignee ? h("span",{class:"tag "+role.section, text:"For "+staffName(t.assignee)}) : null,
+          role ? h("span",{class:"tag "+role.section, text:role.name}) : h("span",{class:"tag plain", text:"Everyone"}),
+          t.assignee ? h("span",{class:"tag plain", text:"For "+staffName(t.assignee)}) : null,
+          t.repeat!=="once" ? h("span",{class:"tag plain", text:repeatLabel(t)}) : null,
           due ? h("span",{class:"due-line "+due.cls, text:due.text}) : null),
         done ? h("div",{class:"line ok", text:"✓ Done by "+doneName(t)+" · "+when(t.done_at)}) : null,
-        h("div",{class:"line"}, h("span",{text:"Added by "+addedName(t)+" · "+when(t.added_at)})),
         editable ? h("div",{class:"line"},
-          h("button",{type:"button", class:"linkbtn", onclick:()=>{ S.editTask = t.id; S.editDraft = {text:t.text, assignee:t.assignee||"", repeat:t.repeat, due_date:t.due_date||"", due_time:hhmm(t.due_time)}; S.confirm = null; render(); $("edText")?.focus(); }},"Edit"),
+          h("button",{type:"button", class:"linkbtn", onclick:()=>act("api_star_task",{p_id:t.id, p_important:!t.important}, t.important ? "Unstarred" : "Starred")}, t.important ? "Unstar" : "★ Star"),
+          h("button",{type:"button", class:"linkbtn", onclick:()=>{ S.editTask = t.id; S.editDraft = {text:t.text, assignee:t.assignee||"", repeat:t.repeat, due_date:t.due_date||"", due_time:hhmm(t.due_time), role_id:t.role_id||"", important:!!t.important}; S.confirm = null; render(); $("edText")?.focus(); }},"Edit"),
           S.confirm===ck ? h("button",{type:"button", class:"linkbtn warn", onclick:async ()=>{ S.confirm=null; await act("api_remove_task",{p_id:t.id},"Task removed"); }},"Tap again to remove")
-                         : h("button",{type:"button", class:"linkbtn", onclick:()=>askConfirm(ck)},"Remove")) : null)));
-}
-
-function viewRole(){
-  const role = roleById(S.roleId);
-  if (!role || !canSeeRole(role)){ S.view="overview"; return viewOverview(); }
-  const people = roleStaff(role.id);
-  const allTasks = roleTasks(role.id);
-  let tasks = allTasks;
-  const p = progressOf(allTasks.filter(countsToday));
-  if (S.filter==="everyone") tasks = tasks.filter(t=>!t.assignee);
-  else if (S.filter!=="all") tasks = tasks.filter(t=>t.assignee===S.filter || !t.assignee);
-  const byDue = (a,b)=>(taskDeadline(a)||0)-(taskDeadline(b)||0);
-  const now = tasks.filter(t=>bucket(t)==="now").sort((a,b)=>Number(isOverdue(b))-Number(isOverdue(a)) || (a.repeat==="daily")-(b.repeat==="daily"));
-  const later = tasks.filter(t=>bucket(t)==="later").sort(byDue);
-  const done = tasks.filter(t=>bucket(t)==="done");
-  const overCount = allTasks.filter(isOverdue).length;
-  const out = [];
-  out.push(h("div",{class:"rolehead"},
-    h("button",{type:"button", class:"back", onclick:()=>go("overview")},"← All roles"),
-    h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:role.name, style:"font-size:32px"}), h("span",{class:"tag "+role.section, text:secInfo(role.section)[1]})),
-    h("div",{class:"meta"}, h("span",{text: p.total ? p.done+" of "+p.total+" done today" : allTasks.length ? "Nothing due today" : "No tasks yet"}),
-      p.total && p.done===p.total ? h("span",{class:"tag ok", text:"All done"}) : null,
-      overCount ? h("span",{class:"tag danger", text:overCount+" overdue"}) : null),
-    p.total ? bar(p.pct, "role:"+role.id) : null));
-  if (people.length) out.push(h("div",{class:"chips", role:"group", "aria-label":"Show tasks for"},
-    [["all","Everyone's tasks"],["everyone","Shared only"], ...people.map(s=>[s.id, s.name])].map(([id,label])=>
-      h("button",{type:"button", class:"chip", "aria-pressed":S.filter===id?"true":"false", onclick:()=>{ S.filter=id; render(); }}, label))));
-  if (!allTasks.length){
-    const starter = STARTERS[role.id] && isAdmin() && canWrite();
-    out.push(emptyCard("Nothing on this list yet",
-      starter ? "Add tasks one at a time below, or start from a typical "+role.name.toLowerCase()+" list and edit it." : "Add the first task below.",
-      starter ? h("button",{type:"button", class:"btn ghost", onclick:()=>act("api_add_starter_tasks",{p_role_id:role.id, p_texts:STARTERS[role.id]},"Starter list added. Edit it however you like.")},"Use a starter list") : null));
-  } else {
-    out.push(h("div",{class:"list"},
-      now.length ? h("div",{class:"divider first", text:"To do · "+now.length}) : null,
-      now.map(t=>taskRow(t, role)),
-      later.length ? h("div",{class:"divider", text:"Coming up · "+later.length}) : null,
-      later.map(t=>taskRow(t, role)),
-      done.length ? h("div",{class:"divider", text:"Done · "+done.length}) : null,
-      done.map(t=>taskRow(t, role)),
-      !tasks.length ? h("div",{class:"task"}, h("span"), h("span",{class:"hint", text:"No tasks match this filter."})) : null));
-  }
-  const assignees = (people.length ? people : D().staff).slice().sort((a,b)=>a.name.localeCompare(b.name));
-  const d = S.draft;
-  out.push(h("form",{class:"add", onsubmit:async e=>{ e.preventDefault(); if (!d.text.trim()) return;
-      if (RECURRING.has(d.repeat) && !d.due_date) return toast("Pick the first due date.");
-      if (await act("api_add_task",{p_role_id:role.id, p_text:d.text, p_assignee:d.assignee||null, p_repeat:d.repeat, p_due_date:d.repeat==="daily" ? null : (d.due_date||null), p_due_time:d.due_time||null})){
-        S.draft = {...d, text:"", due_time:"", due_date: RECURRING.has(d.repeat) ? shiftDay() : ""}; render(); $("newTask")?.focus(); } }},
-    h("label",{class:"lbl full", for:"newTask"}, "New task", h("input",{type:"text", id:"newTask", placeholder:"e.g. Clean the beer lines", value:d.text, oninput:e=>d.text=e.target.value})),
-    h("label",{class:"lbl full", for:"newAssignee"}, "For",
-      h("select",{id:"newAssignee", onchange:e=>d.assignee=e.target.value},
-        h("option",{value:"", selected:!d.assignee},"Anyone on this shift"),
-        assignees.map(s=>h("option",{value:s.id, selected:d.assignee===s.id}, s.name)))),
-    scheduleFields(d, "new"),
-    h("button",{type:"submit", class:"btn full", disabled:!canWrite()},"Add task")));
-  return out;
+                         : h("button",{type:"button", class:"linkbtn", onclick:()=>askConfirm(ck)},"Remove"),
+          h("span",{class:"hint", text:"Added by "+addedName(t)})) : null)));
 }
 
 /* ---------- Inventory ---------- */
@@ -1744,7 +1736,7 @@ function render(){
     $("tabShifts").setAttribute("aria-pressed", String(tab==="shifts"));
     $("tabInv").setAttribute("aria-pressed", String(tab==="inventory"));
     $("tabTeam").setAttribute("aria-pressed", String(tab==="team"));
-    kids = S.view==="role" ? viewRole() : S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : S.view==="schedule" ? viewSchedule() : viewOverview();
+    kids = S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : S.view==="schedule" ? viewSchedule() : viewOverview();
   }
   const active = document.activeElement, aid = active && active.id;
   let sel = null; try { if (aid && active.selectionStart != null) sel = [active.selectionStart, active.selectionEnd]; } catch(e){}

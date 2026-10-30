@@ -502,3 +502,14 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .choice input{width:20px;height:20px;margin-top:1px;accent-color:var(--blue);flex:none}
 .choice span{display:flex;flex-direction:column;gap:1px}
 .covfields[hidden]{display:none}
+
+/* v22: Tasks tab */
+.tasks-head{margin:6px 0 0}
+.list .divider:first-child{border-top:0}
+.divider.over{color:var(--danger);background:var(--danger-soft)}
+button.divider.fold{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);cursor:pointer;color:var(--muted)}
+.task.important{box-shadow:inset 4px 0 0 var(--gold)}
+.task .star{color:var(--gold-deep)}
+.sumleft.over{background:var(--danger);color:#fff}
+.star-toggle{font-weight:600}
+.star-toggle input{accent-color:var(--gold-deep)}

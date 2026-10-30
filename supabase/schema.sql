@@ -104,6 +104,9 @@ alter table tasks add column if not exists done_due date;
 alter table tasks add column if not exists done_until timestamptz;
 alter table tasks drop constraint if exists tasks_repeat_check;
 alter table tasks add constraint tasks_repeat_check check (repeat in ('daily','weekly','biweekly','monthly','once'));
+-- v22: the Tasks tab. Managers add the significant tasks; a task can be for everyone (no role), and can be starred as important.
+alter table tasks alter column role_id drop not null;
+alter table tasks add column if not exists important boolean not null default false;
 
 -- Supplier order schedules (added Oct 2026). Safe to re-run on an existing database.
 --   schedule:        daily | weekly (on the chosen days) | biweekly | monthly | once
@@ -321,46 +324,59 @@ begin
   end if;
 
   select name into rname from roles where id = t.role_id;
-  perform _log(me, case when was_done then 'undone' else 'done' end, t.text, rname);
+  perform _log(me, case when was_done then 'undone' else 'done' end, t.text, coalesce(rname, 'Tasks'));
 end $$;
 
 drop function if exists api_add_task(uuid, text, text, text, text);
+drop function if exists api_add_task(uuid, text, text, text, text, date, text);
+-- Managers add the tasks worth tracking. No role means it's for everyone.
 create or replace function api_add_task(p_token uuid, p_role_id text, p_text text, p_assignee text, p_repeat text,
-                                        p_due_date date default null, p_due_time text default null) returns void language plpgsql
+                                        p_due_date date default null, p_due_time text default null, p_important boolean default false) returns void language plpgsql
 set search_path = public, extensions as $$
-declare me staff := _me(p_token); rname text; rep text := _clean_repeat(p_repeat); dd date := p_due_date;
+declare me staff := _mgr(p_token); rid text; rname text; rep text := _clean_repeat(p_repeat); dd date := p_due_date;
 begin
   if coalesce(trim(p_text),'') = '' then raise exception 'empty'; end if;
-  select name into rname from roles where id = p_role_id;
-  if rname is null then raise exception 'not_found'; end if;
+  if nullif(p_role_id,'') is not null then
+    select id, name into rid, rname from roles where id = p_role_id;
+    if rid is null then raise exception 'not_found'; end if;
+  end if;
   if rep = 'daily' then dd := null; elsif rep <> 'once' and dd is null then dd := _shift_day(); end if;
-  insert into tasks (role_id, text, assignee, repeat, due_date, due_time, anchor_day, added_by, added_by_name)
-  values (p_role_id, trim(p_text), nullif(p_assignee,''), rep, dd, _clean_time(p_due_time),
-          case when rep = 'monthly' then extract(day from dd)::int end, me.id, me.name);
-  perform _log(me, 'added', trim(p_text), rname);
+  insert into tasks (role_id, text, assignee, repeat, due_date, due_time, anchor_day, important, added_by, added_by_name)
+  values (rid, trim(p_text), (select id from staff where id = nullif(p_assignee,'')), rep, dd, _clean_time(p_due_time),
+          case when rep = 'monthly' then extract(day from dd)::int end, coalesce(p_important, false), me.id, me.name);
+  perform _log(me, 'added', trim(p_text), coalesce(rname, 'Tasks'));
 end $$;
 
--- Change a task's wording, who it's for, or its schedule (managers, or whoever added it).
+-- Change a task (managers). p_role_id '-' and p_important null keep what's there (older app versions don't send them).
 -- Changing the schedule starts it fresh as not done.
+drop function if exists api_update_task(uuid, text, text, text, text, date, text);
 create or replace function api_update_task(p_token uuid, p_id text, p_text text, p_assignee text, p_repeat text,
-                                           p_due_date date default null, p_due_time text default null) returns void language plpgsql
+                                           p_due_date date default null, p_due_time text default null,
+                                           p_role_id text default '-', p_important boolean default null) returns void language plpgsql
 set search_path = public, extensions as $$
-declare me staff := _me(p_token); t tasks; rname text; rep text := _clean_repeat(p_repeat); dd date := p_due_date; tm time := _clean_time(p_due_time);
+declare me staff := _mgr(p_token); t tasks; rid text; rname text; rep text := _clean_repeat(p_repeat); dd date := p_due_date; tm time := _clean_time(p_due_time);
 begin
   select * into t from tasks where id = p_id for update;
   if not found then raise exception 'not_found'; end if;
-  if not (_is_manager(me.roles) or t.added_by = me.id) then raise exception 'managers_only'; end if;
   if coalesce(trim(p_text),'') = '' then raise exception 'empty'; end if;
+  rid := case when p_role_id = '-' then t.role_id else (select id from roles where id = nullif(p_role_id,'')) end;
   if rep = 'daily' then dd := null; elsif rep <> 'once' and dd is null then dd := _shift_day(); end if;
-  update tasks set text = trim(p_text), assignee = (select id from staff where id = nullif(p_assignee,'')),
+  update tasks set text = trim(p_text), assignee = (select id from staff where id = nullif(p_assignee,'')), role_id = rid,
+                   important = coalesce(p_important, important),
                    repeat = rep, due_date = dd, due_time = tm, anchor_day = case when rep = 'monthly' then extract(day from dd)::int end
    where id = p_id;
   if rep is distinct from t.repeat or dd is distinct from t.due_date or tm is distinct from t.due_time then
     update tasks set done = false, done_day = null, done_due = null, done_until = null, done_by = null, done_by_name = null, done_at = null where id = p_id;
   end if;
-  select name into rname from roles where id = t.role_id;
-  perform _log(me, 'edited', trim(p_text), rname);
+  select name into rname from roles where id = rid;
+  perform _log(me, 'edited', trim(p_text), coalesce(rname, 'Tasks'));
 end $$;
+
+-- Star or unstar a task (managers).
+create or replace function api_star_task(p_token uuid, p_id text, p_important boolean) returns void language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _mgr(p_token);
+begin update tasks set important = coalesce(p_important, false) where id = p_id; end $$;
 
 create or replace function api_add_starter_tasks(p_token uuid, p_role_id text, p_texts text[]) returns void language plpgsql
 set search_path = public, extensions as $$
@@ -377,10 +393,10 @@ declare me staff := _me(p_token); t tasks; rname text;
 begin
   select * into t from tasks where id = p_id;
   if not found then return; end if;
-  if not (_is_manager(me.roles) or t.added_by = me.id) then raise exception 'managers_only'; end if;
+  if not _is_manager(me.roles) then raise exception 'managers_only'; end if;
   delete from tasks where id = p_id;
   select name into rname from roles where id = t.role_id;
-  perform _log(me, 'removed', t.text, rname);
+  perform _log(me, 'removed', t.text, coalesce(rname, 'Tasks'));
 end $$;
 
 -- ---------- inventory counts (everyone) ----------
@@ -742,19 +758,19 @@ begin
       ov_title := '{}'; ov_body := '{}';
       for r in
         select x.* from (
-          select tk.id, tk.text, ro.name as rname,
+          select tk.id, tk.text, coalesce(ro.name, 'Everyone') as rname, tk.important,
                  case when tk.repeat = 'daily' then today else tk.due_date end as occ,
                  _deadline(case when tk.repeat = 'daily' then today else tk.due_date end, tk.due_time) as dl
-            from tasks tk join roles ro on ro.id = tk.role_id
+            from tasks tk left join roles ro on ro.id = tk.role_id
            where (tk.repeat = 'daily' and tk.due_time is not null and tk.done_day is distinct from today)
               or (tk.repeat in ('weekly','biweekly','monthly') and tk.due_date is not null and (tk.done_until is null or tk.done_until <= p_now))
               or (tk.repeat = 'once' and tk.due_date is not null and not tk.done)) x
-         where x.dl < p_now order by x.dl
+         where x.dl < p_now order by x.important desc, x.dl
       loop
         k := 'overdue:' || endpoint_key || ':' || r.id || ':' || r.occ;
         insert into push_sent(key) values (k) on conflict do nothing; get diagnostics rc = row_count;
         continue when rc = 0;
-        ov_title := ov_title || r.text;
+        ov_title := ov_title || (case when r.important then '★ ' else '' end || r.text);
         ov_body := ov_body || (r.rname || ' · was due ' || _fmt_due(r.dl, p_now));
       end loop;
       if array_length(ov_title, 1) = 1 then
@@ -856,28 +872,24 @@ begin
         k := 'summary:' || endpoint_key || ':' || covered;
         insert into push_sent(key) values (k) on conflict do nothing; get diagnostics rc = row_count;
         if rc > 0 then
+          -- tasks checked off during that shift day (still checked off at the end of it)
           with last_ev as (
             select distinct on (text, place) text, place, kind from log
-             where day = covered and kind in ('done','undone') order by text, place, at desc),
-          daily as (
-            select tk.text, ro.name as place from tasks tk join roles ro on ro.id = tk.role_id
-             where tk.repeat = 'daily' and tk.added_at < ((covered + 1) + time '05:00') at time zone tz)
-          select count(*), count(*) filter (where le.kind = 'done'),
-                 coalesce(array_agg(d.text order by d.place, d.text) filter (where le.kind is distinct from 'done'), '{}')
-            into total, done_n, missed
-            from daily d left join last_ev le on le.text = d.text and le.place = d.place;
-          select count(*) into n_over from tasks tk
+             where day = covered and kind in ('done','undone') order by text, place, at desc)
+          select count(*) filter (where kind = 'done') into done_n from last_ev;
+          select coalesce(array_agg(case when tk.important then '★ ' else '' end || tk.text order by tk.important desc, _deadline(tk.due_date, tk.due_time)), '{}'), count(*)
+            into missed, n_over from tasks tk
            where ((tk.repeat in ('weekly','biweekly','monthly') and (tk.done_until is null or tk.done_until <= p_now))
                   or (tk.repeat = 'once' and not tk.done))
              and tk.due_date is not null and _deadline(tk.due_date, tk.due_time) < p_now;
           select count(*) into n_out from counts c join items i on i.id = c.item_id where c.on_hand <= 0 and coalesce(i.par, 0) > 0;
+          total := done_n + n_over + n_out;
           if total > 0 then
-            body := done_n || ' of ' || total || ' checklist tasks done.';
-            if coalesce(array_length(missed, 1), 0) > 0 then
-              body := body || ' Not done: ' || array_to_string(missed[1:3], ', ') ||
-                      case when array_length(missed, 1) > 3 then ' and ' || (array_length(missed, 1) - 3) || ' more' else '' end || '.';
+            body := case done_n when 0 then 'No tasks checked off.' when 1 then '1 task checked off.' else done_n || ' tasks checked off.' end;
+            if n_over > 0 then
+              body := body || ' Overdue: ' || array_to_string(missed[1:3], ', ') ||
+                      case when n_over > 3 then ' and ' || (n_over - 3) || ' more' else '' end || '.';
             end if;
-            if n_over > 0 then body := body || ' ' || n_over || case when n_over = 1 then ' task' else ' tasks' end || ' overdue.'; end if;
             if n_out > 0 then body := body || ' ' || n_out || case when n_out = 1 then ' item' else ' items' end || ' out.'; end if;
             out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
               'title', 'Shift recap · ' || to_char(covered, 'Dy Mon FMDD'), 'body', body, 'url', './', 'tag', 'recap');
