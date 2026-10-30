@@ -595,3 +595,8 @@ fieldset.choices legend.lbl{font-size:13px;font-weight:600;color:var(--muted);pa
 .skips .strike{text-decoration:line-through;color:var(--muted)}
 .evhero .tag.plain,.evhero .tag{background:rgba(255,255,255,.18);color:#fff}
 .offrow .strike{text-decoration:line-through;color:var(--muted);font-weight:600}
+/* promote checkbox (v27) */
+.promobox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;gap:6px}
+.promobox .toggle{align-items:flex-start}
+.promobox .toggle input{margin-top:1px;flex:none}
+.promobox:has(input:disabled){opacity:.7}

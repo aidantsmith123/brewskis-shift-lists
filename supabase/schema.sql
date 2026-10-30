@@ -254,7 +254,7 @@ begin
     'events', coalesce((select json_agg(json_build_object('id', e.id, 'title', e.title, 'kind', e.kind, 'day', e.day,
                           'start_time', e.start_time, 'end_time', e.end_time, 'notes', e.notes,
                           'added_by', e.added_by, 'added_by_name', e.added_by_name, 'added_at', e.added_at,
-                          'repeat', e.repeat, 'repeat_until', e.repeat_until, 'skip_dates', e.skip_dates)
+                          'repeat', e.repeat, 'repeat_until', e.repeat_until, 'skip_dates', e.skip_dates, 'promote', e.promote)
                           order by e.day, e.start_time nulls first, e.title)
                         from events e where e.day >= _shift_day() - 70
                            or (e.repeat <> 'none' and (e.repeat_until is null or e.repeat_until >= _shift_day() - 70))), '[]'),
@@ -1371,7 +1371,7 @@ end $$;
 -- ---------- events (added Oct 2026) ----------
 -- The Events tab: a calendar of what's coming up at the pub. Managers add them; everyone sees them.
 --   kind: party | entertainment | standard | other
--- Entertainment events get three "Promote" tasks for managers, due 2 weeks, 1 week and 1 day before.
+-- Events marked "Promote it" get three "Promote" tasks for managers, due 2 weeks, 1 week and 1 day before.
 create table if not exists events (
   id text primary key default gen_random_uuid()::text,
   title text not null,
@@ -1396,6 +1396,14 @@ alter table events add column if not exists repeat_until date;
 alter table events add column if not exists skip_dates date[] not null default '{}';
 alter table events drop constraint if exists events_repeat_check;
 alter table events add constraint events_repeat_check check (repeat in ('none','weekly','biweekly','monthly','monthly_nth','monthly_last'));
+-- v27: any one-time event can get promotion reminders ("Promote it"). Entertainment events made before this had them, so they keep them.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'events' and column_name = 'promote') then
+    alter table events add column promote boolean not null default false;
+    update events set promote = true where kind = 'entertainment' and repeat = 'none';
+  end if;
+end $$;
 do $$
 begin
   alter table events enable row level security;
@@ -1405,14 +1413,14 @@ begin
 end $$;
 
 -- Keep an event's promotion tasks in line with the event. Returns how many new tasks it added.
---   Entertainment: one starred task for managers 14, 7 and 1 days before. Ones already in the past aren't added.
+--   Promoted (one-time) events: one starred task for managers 14, 7 and 1 days before. Ones already in the past aren't added.
 --   Moving the event moves the tasks (and un-checks any whose date changed); one that would now be in the past goes away.
---   Any other type: the promotion tasks that aren't done yet go away.
+--   Not promoted: the promotion tasks that aren't done yet go away.
 create or replace function _sync_event_tasks(p_ev events, p_me staff) returns int language plpgsql
 set search_path = public, extensions as $$
 declare lead int; due date; tk tasks; n int := 0; mrole text; label text; today date := _shift_day();
 begin
-  if p_ev.kind <> 'entertainment' then
+  if not p_ev.promote or p_ev.repeat <> 'none' then
     delete from tasks where event_id = p_ev.id and not done;
     return 0;
   end if;
@@ -1444,13 +1452,17 @@ end $$;
 
 -- Add (p_id null) or change an event (managers). Returns its id.
 drop function if exists api_save_event(uuid, text, text, text, date, text, text, text);
+drop function if exists api_save_event(uuid, text, text, text, date, text, text, text, text, date);
 -- p_repeat null keeps what's there when changing an event (older app versions don't send it). Only Standard events repeat.
+-- p_promote: add the promotion tasks. Null (older app versions) means: new Entertainment events yes, others no;
+-- a changed event keeps its setting unless its type changed.
 create or replace function api_save_event(p_token uuid, p_id text, p_title text, p_kind text, p_day date,
                                           p_start text default null, p_end text default null, p_notes text default '',
-                                          p_repeat text default null, p_until date default null) returns text language plpgsql
+                                          p_repeat text default null, p_until date default null,
+                                          p_promote boolean default null) returns text language plpgsql
 set search_path = public, extensions as $$
 declare me staff := _mgr(p_token); ev events; old events; k text := lower(coalesce(nullif(trim(p_kind),''), 'standard')); n int;
-        rp text := lower(nullif(trim(p_repeat),'')); un date := p_until;
+        rp text := lower(nullif(trim(p_repeat),'')); un date := p_until; pr boolean := p_promote;
 begin
   if coalesce(trim(p_title),'') = '' then raise exception 'empty'; end if;
   if p_day is null then raise exception 'bad_time'; end if;
@@ -1459,19 +1471,21 @@ begin
     select * into old from events where id = p_id;
     if not found then raise exception 'not_found'; end if;
     if rp is null then rp := old.repeat; un := old.repeat_until; end if;
+    if pr is null and old.kind = k then pr := old.promote; end if;
   end if;
   rp := coalesce(rp, 'none');
   if rp not in ('none','weekly','biweekly','monthly','monthly_nth','monthly_last') or k <> 'standard' then rp := 'none'; end if;
   if rp = 'none' then un := null; end if;
+  pr := coalesce(pr, k = 'entertainment') and rp = 'none';   -- repeating events don't get promotion tasks
   if un is not null and un < p_day then raise exception 'bad_time'; end if;
   if nullif(p_id,'') is null then
-    insert into events (title, kind, day, start_time, end_time, notes, repeat, repeat_until, added_by, added_by_name)
-    values (left(trim(p_title), 120), k, p_day, _clean_time(p_start), _clean_time(p_end), left(coalesce(trim(p_notes),''), 1000), rp, un, me.id, me.name)
+    insert into events (title, kind, day, start_time, end_time, notes, repeat, repeat_until, promote, added_by, added_by_name)
+    values (left(trim(p_title), 120), k, p_day, _clean_time(p_start), _clean_time(p_end), left(coalesce(trim(p_notes),''), 1000), rp, un, pr, me.id, me.name)
     returning * into ev;
     perform _log(me, 'added', ev.title, 'Events');
   else
     update events set title = left(trim(p_title), 120), kind = k, day = p_day, start_time = _clean_time(p_start), end_time = _clean_time(p_end),
-                      notes = left(coalesce(trim(p_notes),''), 1000), repeat = rp, repeat_until = un,
+                      notes = left(coalesce(trim(p_notes),''), 1000), repeat = rp, repeat_until = un, promote = pr,
                       skip_dates = case when rp = 'none' then '{}' else array(select x from unnest(skip_dates) x where x >= p_day) end,
                       updated_at = now()
      where id = p_id returning * into ev;

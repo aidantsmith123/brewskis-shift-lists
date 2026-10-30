@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 26;
+const APP_VERSION = 27;
 const APP_DATE = "2026-10-30";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -993,7 +993,7 @@ function taskRow(t){
         h("div",{class:"line"},
           role ? h("span",{class:"tag "+role.section, text:role.name}) : h("span",{class:"tag plain", text:"Everyone"}),
           t.assignee ? h("span",{class:"tag plain", text:"For "+staffName(t.assignee)}) : null,
-          t.event_id && eventById(t.event_id) ? h("button",{type:"button", class:"tag ev-entertainment evlink", onclick:()=>{ const e = eventById(t.event_id); go("events"); if (e) openEventSheet(e); }},"🎤 See event") : null,
+          t.event_id && eventById(t.event_id) ? h("button",{type:"button", class:"tag ev-"+eventById(t.event_id).kind+" evlink", onclick:()=>{ const e = eventById(t.event_id); go("events"); if (e) openEventSheet(e); }},"📣 See event") : null,
           t.repeat!=="once" ? h("span",{class:"tag plain", text:repeatLabel(t)}) : null,
           due ? h("span",{class:"due-line "+due.cls, text:due.text}) : null),
         done ? h("div",{class:"line ok", text:"✓ Done by "+doneName(t)+" · "+when(t.done_at)}) : null,
@@ -1812,7 +1812,7 @@ function viewEvents(){
     h("span",{class:"line"}, kindTag(next.kind), isRepeating(next) ? h("span",{class:"tag", text:"↻ "+repeatText(next, true)}) : null,
       up.length > 1 ? h("span",{class:"more", text:"+"+(up.length-1)+" more coming up"}) : null)));
   else out.push(emptyCard("Nothing on the calendar", admin
-    ? "Add parties, live music, trivia, game days and anything else coming up. Standard events can repeat, and Entertainment events get promotion reminders for managers."
+    ? "Add parties, live music, trivia, game days and anything else coming up. Standard events can repeat, and any event can get promotion reminders for managers."
     : "When a manager adds an event, it shows up here."));
 
   out.push(calendarCard());
@@ -1873,7 +1873,7 @@ function calendarCard(){
     dayPanel);
 }
 function eventRow(e){
-  const d = parseDay(e.day), promo = e.kind==="entertainment" && isAdmin() ? promoTasks(e) : [];
+  const d = parseDay(e.day), promo = e.promote && isAdmin() ? promoTasks(e) : [];
   const done = promo.filter(isDone).length, overdue = promo.filter(isOverdue).length;
   return h("button",{type:"button", class:"evrow ev-"+e.kind+(e.day < shiftDay() ? " past" : ""), onclick:()=>openEventSheet(e)},
     h("span",{class:"evdate", "aria-hidden":"true"},
@@ -1888,7 +1888,7 @@ function eventRow(e){
 }
 /* e is one date of an event (from eventInstances), or the event itself */
 function openEventSheet(e){
-  const admin = isAdmin(), promo = e.kind==="entertainment" ? promoTasks(e) : [], rep = isRepeating(e), today = shiftDay();
+  const admin = isAdmin(), promo = e.promote ? promoTasks(e) : [], rep = isRepeating(e), today = shiftDay();
   const reopen = () => { const fresh = eventById(e.id); if (fresh && !$("sheet").hidden) openEventSheet(instanceOf(fresh, e.day)); };
   const kids = [
     h("div",{class:"line"}, kindTag(e.kind), eventWhen(e) ? h("span",{class:"hint", text:eventWhen(e)}) : null),
@@ -1903,7 +1903,7 @@ function openEventSheet(e){
       skipped.map(d=>h("div",{class:"row"}, h("span",{class:"strike", text:shortDay(d)}),
         admin && canWrite() ? h("button",{type:"button", class:"linkbtn", onclick:async ()=>{ if (await act("api_skip_event",{p_id:e.id, p_day:d, p_skip:false}, "Back on for "+shortDay(d))) reopen(); }},"Bring back") : null))));
   }
-  if (admin && e.kind==="entertainment"){
+  if (admin && e.promote){
     kids.push(h("div",{class:"stack promo"},
       h("b",{text:"Promotion"}),
       promo.length ? promo.map(t=>h("div",{class:"promorow"+(isDone(t)?" done":"")+(isOverdue(t)?" over":"")},
@@ -1922,7 +1922,7 @@ function openEventSheet(e){
       h("button",{type:"button", class:"btn ghost small", onclick:()=>{ closeSheet(); openEventForm(eventById(e.id) || e); }}, rep ? "Edit all dates" : "Edit event"),
       h("button",{type:"button", class:"linkbtn warn", id:"delEventBtn", onclick:ev=>{
         if (ev.target.dataset.armed){ closeSheet(); act("api_remove_event",{p_id:e.id},"Event removed"); }
-        else { ev.target.dataset.armed = "1"; ev.target.textContent = rep ? "Tap again to remove every date" : e.kind==="entertainment" && promo.length ? "Tap again: remove it and its promotion tasks" : "Tap again to remove"; } }},
+        else { ev.target.dataset.armed = "1"; ev.target.textContent = rep ? "Tap again to remove every date" : promo.length ? "Tap again: remove it and its promotion tasks" : "Tap again to remove"; } }},
         rep ? "Remove all dates" : "Remove event")));
   }
   kids.push(h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Close"));
@@ -1942,6 +1942,13 @@ function openEventForm(e, dateStr){
   const untilBox = h("label",{class:"lbl", for:"evUntil"}, "Last date (optional)", until);
   const repBox = h("div",{class:"stack repbox"}, h("label",{class:"lbl", for:"evRepeat"}, "Repeat", repSel), untilBox);
   const dateLbl = h("span",{text:"Date"});
+  /* "Promote it": starts on for Entertainment, off otherwise; once tapped, it stays how you set it */
+  let promote = e ? !!e.promote : kind==="entertainment", promoTouched = !!e;
+  const promoBox = h("input",{type:"checkbox", id:"evPromote", checked:promote, onchange:()=>{ promote = promoBox.checked; promoTouched = true; sync(); }});
+  const promoNote = h("p",{class:"hint", style:"margin:0"});
+  const promoWrap = h("div",{class:"promobox stack"},
+    h("label",{class:"toggle", for:"evPromote"}, promoBox, h("span",{}, h("b",{text:"📣 Promote it"}), h("span",{class:"hint", text:" · reminders for managers"}))),
+    promoNote);
   const promoHint = h("div",{class:"promohint"});
   const sync = () => {
     /* repeat choices follow the date ("Every Tuesday"); only Standard events repeat */
@@ -1952,10 +1959,15 @@ function openEventForm(e, dateStr){
     const reps = kind==="standard" && repeat!=="none";
     untilBox.hidden = !reps; until.min = date.value || "";
     dateLbl.textContent = reps ? "First date" : "Date";
-    promoHint.hidden = kind!=="entertainment";
-    if (kind!=="entertainment" || !date.value) return promoHint.replaceChildren();
+    if (!promoTouched){ promote = kind==="entertainment"; promoBox.checked = promote; }
+    promoBox.disabled = reps;
+    promoNote.textContent = reps ? "Repeating events can't get promotion reminders." : "";
+    promoNote.hidden = !reps;
+    const on = promote && !reps;
+    promoHint.hidden = !on;
+    if (!on || !date.value) return promoHint.replaceChildren();
     promoHint.replaceChildren(
-      h("b",{text:"🎤 Promotion reminders for managers"}),
+      h("b",{text:"Managers get a starred task to promote it:"}),
       h("ul",{}, PROMO_LEADS.map(([n,label])=>{ const due = addDays(date.value, -n), past = due < today;
         return h("li",{class:past?"past":""}, label+": "+shortDay(due)+(past ? " (already passed, skipped)" : "")); })));
   };
@@ -1974,6 +1986,7 @@ function openEventForm(e, dateStr){
     repBox,
     h("div",{class:"inline"}, h("label",{class:"lbl", for:"evStart", style:"flex:1"}, "Starts (optional)", st), h("label",{class:"lbl", for:"evEnd", style:"flex:1"}, "Ends (optional)", en)),
     h("label",{class:"lbl", for:"evNotes"}, "Details (optional)", notes),
+    promoWrap,
     promoHint,
     err,
     h("button",{type:"button", class:"btn", onclick:async ev=>{
@@ -1983,9 +1996,9 @@ function openEventForm(e, dateStr){
       if (un && un < date.value){ err.textContent = "The last date has to be on or after the first date."; return; }
       ev.target.disabled = true; err.textContent = "";
       try {
-        await call("api_save_event",{p_id:e ? e.id : null, p_title:title.value, p_kind:kind, p_day:date.value, p_start:st.value||null, p_end:en.value||null, p_notes:notes.value, p_repeat:rp, p_until:un});
+        await call("api_save_event",{p_id:e ? e.id : null, p_title:title.value, p_kind:kind, p_day:date.value, p_start:st.value||null, p_end:en.value||null, p_notes:notes.value, p_repeat:rp, p_until:un, p_promote:promote && rp==="none"});
         closeSheet(); play("ok");
-        const n = kind==="entertainment" && !e ? PROMO_LEADS.filter(([n])=>addDays(date.value,-n) >= today).length : 0;
+        const n = promote && rp==="none" && !e ? PROMO_LEADS.filter(([n])=>addDays(date.value,-n) >= today).length : 0;
         toast(e ? "Event saved" : n ? "Event added, plus "+n+" promotion "+(n===1?"task":"tasks")+" for managers" : rp!=="none" ? "Repeating event added" : "Event added");
         S.evMonth = date.value.slice(0,7); S.evDay = null;
         await refresh();
