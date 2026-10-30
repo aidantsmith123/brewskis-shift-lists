@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 19;
+const APP_VERSION = 20;
 const APP_DATE = "2026-10-29";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -33,7 +33,7 @@ const S = {
   newItem:{}, newCat:"", newSup:{name:"", days:[], cutoff:"14:00", notes:"", schedule:"weekly", start_date:""},
   countDraft:{}, countTimers:{}, actQuery:"", actRange:"all", actLimit:10,
   pin:"", loginErr:"", loginBusy:false, lockUntil:0, pinEdit:null, pinDraft:"", pinErr:"", pinBusy:false,
-  invQuery:"", invSup:null, open:loadOpen(), fx:{},
+  invQuery:"", invSup:null, open:loadOpen(), fx:{}, week:null, weekCache:{},
   latest:null, versions:null, versionsAt:0, helloAt:0, updating:false,
   installEvent:null, push:{loaded:false, sub:null, prefs:null, busy:false, err:""}
 };
@@ -67,7 +67,12 @@ function errMsg(e){
     number_taken:"That number is already taken. Pick another.",
     bad_number:"Use 4 to 6 digits.",
     empty:"Type something first.",
-    not_found:"That was already removed."
+    not_found:"That was already removed.",
+    shift_gone:"Someone already took that shift.",
+    not_your_role:"That shift needs a role you don't have.",
+    overlaps:"You're already working during that shift.",
+    shift_started:"That shift has already started.",
+    bad_time:"Check the date, start and end times."
   })[c] || "Couldn't save. Try again in a moment.";
 }
 /* run an action, then pull fresh data; returns true when it worked */
@@ -86,7 +91,7 @@ async function refresh(){
   if (!S.session) return;
   try {
     const d = await call("api_state");
-    S.data = d; S.dataAt = new Date().toISOString();
+    S.data = d; S.dataAt = new Date().toISOString(); S.weekCache = {};
     sayHello();
     if (S.view==="team" && Date.now() - S.versionsAt > 60000) loadVersions();
     try { localStorage.setItem(CACHE_KEY, JSON.stringify({token:S.session.token, at:S.dataAt, data:d})); } catch(e){}
@@ -223,7 +228,7 @@ function when(iso){
   return d.toDateString()===now.toDateString() ? t : d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+", "+t;
 }
 function initials(n){ return (n||"?").trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase() || "?"; }
-const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], log:[], me:null};
+const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], shifts:[], log:[], me:null};
 const me = () => D().me;
 const isAdmin = () => !!(me() && me().manager);
 const canWrite = () => !!me() && !S.offline;
@@ -627,7 +632,7 @@ function viewNotify(){
       h("ul",{class:"steps"},
         h("li",{text:"Order deadlines coming up that haven't been ordered"}),
         h("li",{text:"Tasks that go overdue, and items counted at zero"}),
-        h("li",{text:"A recap of each shift day's checklists"})),
+        h("li",{text:"Shift swaps, and a recap of each shift day's checklists"})),
       h("button",{type:"button", class:"btn", disabled:S.push.busy, onclick:enablePush}, S.push.busy ? "Turning on…" : "Turn on notifications")));
     return out;
   }
@@ -640,6 +645,7 @@ function viewNotify(){
           [[1,"1 hour before"],[2,"2 hours before"],[4,"4 hours before"],[24,"1 day before"]].map(([v,l])=>h("option",{value:v, selected:Number(p.lead_hours)===v}, l))))),
     prefRow("overdue", "Overdue tasks", "When a task passes its due date or due time without being checked off. One alert per task."),
     prefRow("out", "Out of stock", "When someone counts an item at 0."),
+    prefRow("swaps", "Shift swaps", "When someone picks up a coworker's shift or an open shift."),
     prefRow("summary", "Nightly recap", "How many checklist tasks got done in the shift day that just ended, and what was missed.",
       h("label",{class:"lbl", for:"pfRecap"}, "Send at", timeInput("pfRecap","summary_time"))),
     prefRow("quiet", "Quiet hours", "Alerts wait until quiet hours end. The recap still arrives at the time you picked.",
@@ -812,6 +818,7 @@ function viewOverview(){
       h("div",{class:"big"}, String(p.done), h("small",{text:" of "+p.total})),
       h("div",{class:"sumlabel", text: p.total ? (p.done===p.total ? "Everything due today is done" : scope) : "Nothing due today. Open a role to add tasks."}),
       p.total && p.done < p.total ? h("div",{class:"sumleft", text:(p.total-p.done)+" to go"}) : null)));
+  const ns = nextShiftStrip(); if (ns) out.push(ns);
   if (admin && d.suppliers.length){
     const next = suppliersByDeadline().find(x=>x.d && !x.ordered);
     if (next){
@@ -841,9 +848,9 @@ function viewOverview(){
 
 function activitySection(){
   const admin = isAdmin();
-  const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked"};
+  const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked", shift_posted:" put up a shift for grabs: %", shift_taken:" picked up a shift: %"};
   /* staff only see activity from their side of the pub, plus inventory counts */
-  const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); return place=>ok.has(place); })();
+  const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); return place=>ok.has(place); })();
   const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place||""}));
   let shown = ev;
   const q = admin ? S.actQuery.trim().toLowerCase() : "";
@@ -1280,6 +1287,241 @@ function viewInventory(){
   return out;
 }
 
+/* ---------- Schedule ---------- */
+const ymd = d => d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+const localDay = iso => ymd(new Date(iso));
+function mondayOf(str){ const d = parseDay(str); d.setDate(d.getDate() - ((d.getDay()+6)%7)); return ymd(d); }
+const tFmt = iso => new Date(iso).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+const shiftEndDate = s => s.end_at ? new Date(s.end_at) : (()=>{ const d = new Date(s.start_at); if (d.getHours() >= 5) d.setDate(d.getDate()+1); d.setHours(2,0,0,0); return d; })();
+const shiftRange = s => tFmt(s.start_at) + " – " + (s.end_at ? tFmt(s.end_at) : "Close");
+const shiftDayLabel2 = iso => new Date(iso).toLocaleDateString([], {weekday:"short", month:"short", day:"numeric"});
+const roleOfShift = s => roleById(s.role_id);
+const whoOf = s => s.staff_id ? (s.staff_id===me().id ? "You" : staffName(s.staff_id)) : "Open shift";
+function myShifts(){ return D().shifts.filter(s=>s.staff_id===me().id); }
+function overlapsMine(s){
+  const a = new Date(s.start_at), b = shiftEndDate(s);
+  return myShifts().some(x=>x.id!==s.id && new Date(x.start_at) < b && shiftEndDate(x) > a);
+}
+function takeBlocker(s, strict){
+  const m = me();
+  if (!s.up_for_grabs || s.staff_id===m.id) return "gone";
+  if (new Date(s.start_at) <= new Date()) return "started";
+  if (s.role_id && !(m.roles||[]).includes(s.role_id) && (strict || !m.manager)) return "role";
+  if (overlapsMine(s)) return "overlap";
+  return null;
+}
+const takeableShifts = () => (S.data ? D().shifts.filter(s=>!takeBlocker(s)) : []);
+/* for the tab dot and the home strip: only shifts in your own roles, so managers aren't nagged by every open shift they post */
+const forYouShifts = () => (S.data ? D().shifts.filter(s=>!takeBlocker(s, true)) : []);
+function nextShiftStrip(){
+  const now = new Date();
+  const next = myShifts().filter(s=>shiftEndDate(s) > now).sort((a,b)=>a.start_at.localeCompare(b.start_at))[0];
+  const grabs = forYouShifts().length;
+  if (!next && !grabs) return null;
+  const r = next && roleOfShift(next);
+  return h("button",{type:"button", class:"strip nextshift", onclick:()=>go("schedule")},
+    h("span",{class:"t"},
+      h("span",{class:"eyebrow", text: next ? (new Date(next.start_at) <= now ? "You're on now" : "Your next shift") : "Shifts up for grabs"}),
+      next ? h("span",{style:"font-weight:700", text:shiftDayLabel2(next.start_at)+" · "+shiftRange(next)}) : h("span",{style:"font-weight:700", text:"Pick up extra hours"}),
+      next && r ? h("span",{class:"due", text:r.name + (next.up_for_grabs ? " · up for grabs" : "")}) : null),
+    grabs ? h("span",{class:"tag warn", text:grabs+(grabs===1?" up for grabs":" up for grabs")}) : null);
+}
+/* which shifts to show for a week: from the app's data when it covers that week, otherwise ask the server */
+function shiftsForWeek(ws){
+  const we = ymd(new Date(parseDay(ws).getTime() + 6*86400e3));
+  const lo = ymd(new Date(parseDay(shiftDay()).getTime() - 8*86400e3)), hi = ymd(new Date(parseDay(shiftDay()).getTime() + 43*86400e3));
+  if (ws >= lo && we <= hi) return D().shifts.filter(s=>{ const d = localDay(s.start_at); return d >= ws && d <= we; });
+  if (S.weekCache[ws]) return S.weekCache[ws];
+  if (!S.weekCache["loading:"+ws]){
+    S.weekCache["loading:"+ws] = true;
+    call("api_schedule",{p_from:ws, p_to:we}).then(r=>{ S.weekCache[ws] = r || []; render(); }).catch(()=>{ S.weekCache[ws] = []; render(); });
+  }
+  return null;
+}
+function shiftRow(s){
+  const r = roleOfShift(s), mine = s.staff_id===me().id, canTake = !takeBlocker(s);
+  return h("button",{type:"button", class:"srow"+(mine?" is-mine":"")+(s.up_for_grabs?" grabs":"")+(new Date(s.start_at) < new Date() && shiftEndDate(s) < new Date() ? " past" : ""), onclick:()=>openShiftSheet(s)},
+    h("span",{class:"stime"}, h("b",{text:tFmt(s.start_at)}), h("span",{text: s.end_at ? tFmt(s.end_at) : "Close"})),
+    h("span",{class:"swho"},
+      h("span",{class:"sname", text:whoOf(s)}),
+      h("span",{class:"smeta"},
+        r ? h("span",{class:"tag "+r.section, text:r.name}) : null,
+        s.up_for_grabs ? h("span",{class:"tag "+(canTake?"warn":"plain"), text: canTake ? "Up for grabs" : "Up for grabs"}) : null,
+        s.note ? h("span",{class:"hint", text:s.note}) : null)));
+}
+function viewSchedule(){
+  const admin = isAdmin(), out = [];
+  const thisWeek = mondayOf(shiftDay());
+  if (!S.week) S.week = thisWeek;
+  const ws = S.week, wsd = parseDay(ws), wed = new Date(wsd.getTime() + 6*86400e3);
+  const fmtD = d => d.toLocaleDateString([], {month:"short", day:"numeric"});
+  const shifts = shiftsForWeek(ws);
+  const step = n => { const d = parseDay(S.week); d.setDate(d.getDate()+7*n); S.week = ymd(d); render(); };
+  out.push(h("div",{class:"rolehead"},
+    h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"Schedule", style:"font-size:32px"}),
+      admin ? h("button",{type:"button", class:"btn small", onclick:()=>openShiftForm(null, ws===thisWeek ? shiftDay() : ws)},"Add shift") : null),
+    h("div",{class:"weeknav"},
+      h("button",{type:"button", class:"btn ghost small", "aria-label":"Previous week", onclick:()=>step(-1)},"‹"),
+      h("div",{class:"weeklabel"}, h("b",{text:fmtD(wsd)+" – "+fmtD(wed)}), h("span",{class:"hint", text: ws===thisWeek ? "This week" : ws > thisWeek ? "Upcoming" : "Past week"})),
+      h("button",{type:"button", class:"btn ghost small", "aria-label":"Next week", onclick:()=>step(1)},"›")),
+    ws!==thisWeek ? h("button",{type:"button", class:"back", onclick:()=>{ S.week = thisWeek; render(); }},"← Back to this week") : null));
+
+  /* up for grabs, across all upcoming weeks */
+  const grabs = takeableShifts().sort((a,b)=>a.start_at.localeCompare(b.start_at));
+  const mineUp = myShifts().filter(s=>s.up_for_grabs && new Date(s.start_at) > new Date());
+  if (grabs.length || mineUp.length){
+    out.push(h("section",{class:"stack"},
+      h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"Up for grabs"}), grabs.length ? h("span",{class:"tag warn", text:grabs.length+(grabs.length===1?" shift":" shifts")}) : null),
+      grabs.map(s=>{ const r = roleOfShift(s), ck = "take:"+s.id;
+        return h("div",{class:"card grabcard"},
+          h("div",{class:"row"}, h("h3",{text:shiftDayLabel2(s.start_at)+" · "+shiftRange(s)}), r ? h("span",{class:"tag "+r.section, text:r.name}) : null),
+          h("p",{class:"hint", text:(s.staff_id ? staffName(s.staff_id)+" is giving this shift away." : "Open shift, nobody's on it yet.")+(s.posted_note ? " “"+s.posted_note+"”" : "")}),
+          S.confirm===ck ? h("button",{type:"button", class:"btn", "data-own-sound":"", onclick:()=>takeShift(s)},"Tap again to take it")
+                         : h("button",{type:"button", class:"btn ghost", onclick:()=>askConfirm(ck)},"Take this shift"));
+      }),
+      mineUp.map(s=>h("div",{class:"card mygrab"},
+        h("div",{class:"row"}, h("h3",{text:shiftDayLabel2(s.start_at)+" · "+shiftRange(s)}), h("span",{class:"tag plain", text:"Your shift"})),
+        h("p",{class:"hint", text:"You put this up for grabs. It stays yours until a coworker takes it."}),
+        h("button",{type:"button", class:"btn ghost small", onclick:()=>act("api_unpost_shift",{p_id:s.id},"It's your shift again")},"Keep this shift")))));
+  }
+
+  /* the week */
+  if (shifts==null) out.push(h("p",{class:"hint", text:"Loading that week…"}));
+  else {
+    const days = h("section",{class:"days"});
+    for (let i=0;i<7;i++){
+      const d = new Date(wsd.getTime() + i*86400e3), key = ymd(d);
+      const list = shifts.filter(s=>localDay(s.start_at)===key).sort((a,b)=>a.start_at.localeCompare(b.start_at));
+      days.append(h("div",{class:"day"+(key===shiftDay()?" today":"")},
+        h("div",{class:"dayhead"},
+          h("b",{text:d.toLocaleDateString([], {weekday:"long"})}),
+          h("span",{class:"hint", text:fmtD(d)}),
+          key===shiftDay() ? h("span",{class:"tag ok", text:"Today"}) : null,
+          admin ? h("button",{type:"button", class:"linkbtn dayadd", "aria-label":"Add a shift on "+d.toLocaleDateString([], {weekday:"long"}), onclick:()=>openShiftForm(null, key)},"+ Add") : null),
+        list.length ? h("div",{class:"slist"}, list.map(shiftRow)) : h("p",{class:"hint noshift", text:"No shifts"})));
+    }
+    out.push(days);
+    if (admin){
+      const prev = ymd(new Date(wsd.getTime() - 7*86400e3)), ck = "copy:"+ws;
+      out.push(h("div",{class:"inline"},
+        S.confirm===ck ? h("button",{type:"button", class:"btn small", onclick:async ()=>{ S.confirm=null;
+            try { const n = await call("api_copy_week",{p_from:prev, p_to:ws}); toast(n ? "Copied "+n+(n===1?" shift":" shifts")+" from last week" : "Nothing new to copy from last week"); await refresh(); } catch(e){ toast(errMsg(e)); } }},"Tap again: copy last week into this one")
+                       : h("button",{type:"button", class:"btn ghost small", onclick:()=>askConfirm(ck)},"Copy last week")));
+    }
+  }
+
+  /* calendar */
+  out.push(h("div",{class:"card calcard"},
+    h("div",{class:"row"}, h("h3",{text:"Put your shifts in your calendar"})),
+    h("p",{class:"hint", text:"Your shifts show up in Google or Apple Calendar on their own, and update when the schedule changes or you swap."}),
+    h("button",{type:"button", class:"btn ghost", onclick:openCalendarSheet},"Add to my calendar")));
+  return out;
+}
+async function takeShift(s){
+  S.confirm = null;
+  if (await act("api_take_shift",{p_id:s.id}, "It's yours: "+shiftDayLabel2(s.start_at)+", "+shiftRange(s))) play("ok");
+}
+function openShiftSheet(s){
+  const m = me(), r = roleOfShift(s), mine = s.staff_id===m.id, future = new Date(s.start_at) > new Date(), blocker = takeBlocker(s);
+  const noteIn = h("input",{type:"text", id:"giveNote", maxlength:"120", placeholder:"Optional note, e.g. family thing"});
+  const kids = [
+    h("h2",{text:shiftDayLabel2(s.start_at)}),
+    h("div",{class:"bigtime", text:shiftRange(s)}),
+    h("p",{class:"hint", text:[whoOf(s), r && r.name, s.end_at ? null : "until close (2 AM)"].filter(Boolean).join(" · ")}),
+    s.note ? h("p",{text:s.note}) : null,
+    s.up_for_grabs && s.posted_note ? h("p",{class:"hint", text:"Note: “"+s.posted_note+"”"}) : null];
+  if (mine && future && !s.up_for_grabs) kids.push(
+    h("label",{class:"lbl", for:"giveNote"}, "Can't make it?", noteIn),
+    h("button",{type:"button", class:"btn", onclick:async ()=>{ closeSheet(); await act("api_post_shift",{p_id:s.id, p_note:noteIn.value}, "Your shift is up for grabs. It's still yours until someone takes it."); }},"Give this shift away"));
+  if (mine && s.up_for_grabs) kids.push(h("p",{class:"hint", text:"This shift is up for grabs. It stays yours until a coworker takes it."}),
+    h("button",{type:"button", class:"btn ghost", onclick:()=>{ closeSheet(); act("api_unpost_shift",{p_id:s.id},"It's your shift again"); }},"Keep this shift"));
+  if (s.up_for_grabs && !mine){
+    if (!blocker) kids.push(h("button",{type:"button", class:"btn", "data-own-sound":"", onclick:()=>{ closeSheet(); takeShift(s); }},"Take this shift"));
+    else if (blocker==="role") kids.push(h("p",{class:"hint", text:"Only people with the "+(r ? r.name : "right")+" role can take this shift."}));
+    else if (blocker==="overlap") kids.push(h("p",{class:"hint", text:"You're already working during this shift."}));
+  }
+  if (isAdmin()){
+    const ck = "delshift:"+s.id;
+    kids.push(h("div",{class:"inline"},
+      h("button",{type:"button", class:"btn ghost small", onclick:()=>{ closeSheet(); openShiftForm(s); }},"Edit shift"),
+      !mine && s.staff_id && future && !s.up_for_grabs ? h("button",{type:"button", class:"btn ghost small", onclick:()=>{ closeSheet(); act("api_post_shift",{p_id:s.id, p_note:""}, "Shift is up for grabs"); }},"Put up for grabs") : null,
+      h("button",{type:"button", class:"linkbtn warn", id:"delShiftBtn", onclick:e=>{
+        if (e.target.dataset.armed){ closeSheet(); act("api_delete_shift",{p_id:s.id},"Shift deleted"); }
+        else { e.target.dataset.armed = "1"; e.target.textContent = "Tap again to delete"; } }},"Delete shift")));
+  }
+  kids.push(h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Close"));
+  openSheet(...kids);
+}
+function openShiftForm(s, dateStr){
+  const d = D(), staffSorted = d.staff.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const start = s ? new Date(s.start_at) : null;
+  const toHM = dt => pad(dt.getHours())+":"+pad(dt.getMinutes());
+  const firstRole = st => (st && (st.roles||[]).map(roleById).find(r=>r && r.section!=="mgmt")) || null;
+  const who = h("select",{id:"sfWho"},
+    h("option",{value:"", selected:s && !s.staff_id},"Open shift (anyone with the role can take it)"),
+    staffSorted.map(p=>h("option",{value:p.id, selected:s && s.staff_id===p.id}, p.name)));
+  const role = h("select",{id:"sfRole"},
+    h("option",{value:""},"No role"),
+    sortedRoles().map(r=>h("option",{value:r.id, selected:s ? s.role_id===r.id : false}, r.name+" ("+secInfo(r.section)[2]+")")));
+  const date = h("input",{type:"date", id:"sfDate", value: s ? localDay(s.start_at) : (dateStr || shiftDay())});
+  const st = h("input",{type:"time", id:"sfStart", value: s ? toHM(start) : "17:00"});
+  const closeBox = h("input",{type:"checkbox", id:"sfClose", checked: s ? !s.end_at : true});
+  const en = h("input",{type:"time", id:"sfEnd", value: s && s.end_at ? toHM(new Date(s.end_at)) : "23:00", disabled: s ? !s.end_at : true});
+  closeBox.addEventListener("change", ()=>{ en.disabled = closeBox.checked; });
+  const note = h("input",{type:"text", id:"sfNote", maxlength:"120", value: s ? s.note : "", placeholder:"Optional, e.g. trivia night"});
+  who.addEventListener("change", ()=>{ if (!role.value){ const r = firstRole(d.staff.find(p=>p.id===who.value)); if (r) role.value = r.id; } });
+  const err = h("p",{class:"loginerr", role:"alert"});
+  openSheet(
+    h("h2",{text: s ? "Edit shift" : "Add shift"}),
+    h("label",{class:"lbl", for:"sfWho"}, "Who", who),
+    h("label",{class:"lbl", for:"sfRole"}, "Role", role),
+    h("label",{class:"lbl", for:"sfDate"}, "Date", date),
+    h("div",{class:"inline"}, h("label",{class:"lbl", for:"sfStart", style:"flex:1"}, "Starts", st), h("label",{class:"lbl", for:"sfEnd", style:"flex:1"}, "Ends", en)),
+    h("label",{class:"toggle", for:"sfClose"}, closeBox, "Until close (2 AM)"),
+    h("label",{class:"lbl", for:"sfNote"}, "Note", note),
+    err,
+    h("button",{type:"button", class:"btn", onclick:async e=>{
+      if (!date.value || !st.value){ err.textContent = "Pick a date and start time."; return; }
+      e.target.disabled = true;
+      try {
+        await call("api_save_shift",{p_id: s ? s.id : null, p_staff_id: who.value || null, p_role_id: role.value || null,
+          p_date: date.value, p_start: st.value, p_end: closeBox.checked ? null : en.value, p_note: note.value});
+        closeSheet(); toast(s ? "Shift updated" : "Shift added");
+        S.week = mondayOf(date.value); await refresh();
+      } catch(x){ err.textContent = errMsg(x); e.target.disabled = false; }
+    }}, s ? "Save shift" : "Add shift"),
+    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
+  if (!s && !role.value){ const r = firstRole(d.staff.find(p=>p.id===who.value)); if (r) role.value = r.id; }
+}
+async function openCalendarSheet(){
+  let link;
+  try { link = await call("api_cal_link"); } catch(e){ return toast(errMsg(e)); }
+  let team = false;
+  const box = h("div",{class:"stack"});
+  const draw = () => {
+    const url = CFG.supabaseUrl.replace(/\/$/,"") + "/functions/v1/calendar?t=" + link.token + (team ? "&all=1" : "");
+    const webcal = url.replace(/^https?:/, "webcal:");
+    box.replaceChildren(...[
+      link.manager ? h("div",{class:"chips", role:"group", "aria-label":"Which calendar"},
+        h("button",{type:"button", class:"chip", "aria-pressed":String(!team), onclick:()=>{ team = false; draw(); }},"My shifts"),
+        h("button",{type:"button", class:"chip", "aria-pressed":String(team), onclick:()=>{ team = true; draw(); }},"Whole team")) : null,
+      h("a",{class:"btn", href:"https://calendar.google.com/calendar/render?cid="+encodeURIComponent(webcal), target:"_blank", rel:"noopener"},"Add to Google Calendar"),
+      h("a",{class:"btn ghost", href:webcal},"Add to Apple Calendar"),
+      h("button",{type:"button", class:"btn ghost", onclick:async ()=>{ try { await navigator.clipboard.writeText(url); toast("Calendar link copied"); } catch(e){ toast("Press and hold the link below to copy it"); } }},"Copy link"),
+      h("div",{class:"boardlink", text:url})].filter(Boolean));
+  };
+  draw();
+  openSheet(
+    h("h2",{text:"Add to your calendar"}),
+    h("p",{class:"hint", text:"Subscribe once and your shifts appear in your calendar app by themselves. Google Calendar checks for changes every few hours, so a swap can take a while to show there. The app always has the latest."}),
+    box,
+    h("p",{class:"hint", text:"This link is private to you. If it ever gets shared, reset it here and add your calendar again."}),
+    h("button",{type:"button", class:"linkbtn", onclick:async e=>{
+      if (!e.target.dataset.armed){ e.target.dataset.armed = "1"; e.target.textContent = "Tap again to reset your calendar link"; return; }
+      try { link = await call("api_cal_reset"); draw(); toast("New link made. The old one stopped working."); e.target.textContent = "Reset my link"; delete e.target.dataset.armed; } catch(x){ toast(errMsg(x)); } }},"Reset my link"),
+    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Close"));
+}
+
 /* ---------- Team ---------- */
 /* devices seen in the last 30 days, newest first */
 function devicesOf(staffId){ const cut = Date.now() - 30*86400e3; return (S.versions||[]).filter(v=>v.staff_id===staffId && new Date(v.seen_at).getTime() > cut); }
@@ -1394,11 +1636,13 @@ function render(){
     const admin = isAdmin();
     $("tabTeam").hidden = !admin;
     if (!admin && S.view==="team") S.view = "overview";
-    const tab = S.view==="team" ? "team" : S.view==="inventory" ? "inventory" : "shifts";
+    const tab = S.view==="team" ? "team" : S.view==="inventory" ? "inventory" : S.view==="schedule" ? "schedule" : "shifts";
+    $("tabSched").setAttribute("aria-pressed", String(tab==="schedule"));
+    $("tabSched").classList.toggle("has-dot", forYouShifts().length > 0);
     $("tabShifts").setAttribute("aria-pressed", String(tab==="shifts"));
     $("tabInv").setAttribute("aria-pressed", String(tab==="inventory"));
     $("tabTeam").setAttribute("aria-pressed", String(tab==="team"));
-    kids = S.view==="role" ? viewRole() : S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : viewOverview();
+    kids = S.view==="role" ? viewRole() : S.view==="team" ? viewTeam() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : S.view==="schedule" ? viewSchedule() : viewOverview();
   }
   const active = document.activeElement, aid = active && active.id;
   let sel = null; try { if (aid && active.selectionStart != null) sel = [active.selectionStart, active.selectionEnd]; } catch(e){}
@@ -1414,6 +1658,7 @@ $("updateBtn").addEventListener("click", applyUpdate);
 $("tabShifts").addEventListener("click", ()=>go("overview"));
 $("tabInv").addEventListener("click", ()=>go("inventory"));
 $("tabTeam").addEventListener("click", ()=>{ go("team"); loadVersions(); });
+$("tabSched").addEventListener("click", ()=>go("schedule"));
 document.addEventListener("keydown", e=>{
   if (S.session || !document.querySelector(".keypad") || e.target.matches("input,select,textarea")) return;
   if (/^\d$/.test(e.key)) pressKey(e.key); else if (e.key==="Backspace") pressKey("del"); else if (e.key==="Enter") pressKey("go");
@@ -1463,8 +1708,9 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
     try { const c = JSON.parse(localStorage.getItem(CACHE_KEY)||"null"); if (c && c.token===S.session.token){ S.data = c.data; S.dataAt = c.at; } } catch(e){}
   }
   if (location.hash==="#inventory") S.view = "inventory";   // opened from an order or out-of-stock notification
+  if (location.hash==="#schedule") S.view = "schedule";     // opened from a shift swap notification
   render();
   if (S.session && configured()) refresh();
   checkLatest(true);
 })();
-window.addEventListener("hashchange", ()=>{ if (location.hash==="#inventory" && S.session){ go("inventory"); } });
+window.addEventListener("hashchange", ()=>{ if (!S.session) return; if (location.hash==="#inventory") go("inventory"); if (location.hash==="#schedule") go("schedule"); });
