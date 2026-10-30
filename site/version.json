@@ -1,5 +1,5 @@
 {
-  "version": 27,
+  "version": 28,
   "date": "2026-10-30",
-  "notes": "Any event can be promoted: tick “Promote it” and managers get reminders 2 weeks, 1 week and 1 day before."
+  "notes": "Cleaner header: just the logo, centered."
 }
