@@ -1,5 +1,5 @@
 {
-  "version": 24,
+  "version": 25,
   "date": "2026-10-30",
-  "notes": "New Events tab: a calendar of what's coming up. Entertainment events give managers reminders to promote them."
+  "notes": "Standard events can repeat: every week, every other week or monthly. Managers can call off a single date."
 }

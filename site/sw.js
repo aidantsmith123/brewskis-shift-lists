@@ -1,5 +1,5 @@
 // Service worker: keeps the app itself available offline. Data always comes live from Supabase.
-const VERSION = "brewskis-v24";
+const VERSION = "brewskis-v25";
 const SHELL = ["./", "index.html", "taps.html", "styles.css", "app.js", "config.js", "manifest.webmanifest", "logo.webp",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
 

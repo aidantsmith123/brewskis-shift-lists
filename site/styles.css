@@ -588,3 +588,10 @@ button.tag.evlink{border:0;cursor:pointer}
 .evsheet-when{display:flex;flex-direction:column;gap:2px;font-size:17px}
 .evsheet-when span{color:var(--muted);font-size:15px}
 fieldset.choices legend.lbl{font-size:13px;font-weight:600;color:var(--muted);padding:0}
+/* repeating events (v25) */
+.repline{font-weight:600;color:var(--ev-std)}
+.repbox{gap:10px}
+.skips{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;gap:6px}
+.skips .strike{text-decoration:line-through;color:var(--muted)}
+.evhero .tag.plain,.evhero .tag{background:rgba(255,255,255,.18);color:#fff}
+.offrow .strike{text-decoration:line-through;color:var(--muted);font-weight:600}
