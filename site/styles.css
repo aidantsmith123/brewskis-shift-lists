@@ -843,3 +843,24 @@ h2.sectitle{font-size:24px}
 .sethead{color:var(--blue)}
 .ptr-spin{border-top-color:var(--blue)}
 .tn-sum{display:block}
+
+/* v34: party bookings */
+.partycard{gap:12px}
+.partycard>.row h2{margin:0;font-family:var(--serif);font-size:22px}
+.subhead{font-size:13px;color:var(--muted);font-weight:600}
+.prow .evdate b{font-size:20px}
+.pfacts{display:grid;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.pfacts:empty{display:none}
+.pfact{display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:baseline}
+.pfact>span:last-child{white-space:pre-wrap;overflow-wrap:anywhere}
+.psub{margin:-6px 0 0;color:var(--muted);font-size:16px}
+.datechecks{gap:6px}
+.datechecks:empty{display:none}
+.datecheck{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;gap:10px}
+.datecheck .tag{white-space:normal;text-align:right}
+.contact{gap:8px}
+.contact .btn{flex:1;text-align:center;text-decoration:none}
+.warnline{margin:0;color:var(--warn);font-weight:600}
+.plainpick .kindopt{--k:var(--blue);--ks:var(--soft)}
+.howpick{grid-template-columns:repeat(3,1fr)}
+.howpick .kindopt{justify-content:center;padding:10px 6px}

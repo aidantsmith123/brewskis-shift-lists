@@ -258,6 +258,15 @@ begin
                           order by e.day, e.start_time nulls first, e.title)
                         from events e where e.day >= _shift_day() - 70
                            or (e.repeat <> 'none' and (e.repeat_until is null or e.repeat_until >= _shift_day() - 70))), '[]'),
+    'parties', case when mgr then coalesce((select json_agg(p order by p.day, p.start_time nulls first) from parties p
+                          where p.status = 'inquiry' or coalesce(p.day, (p.submitted_at at time zone 'America/New_York')::date) >= _shift_day() - 70), '[]')
+               else coalesce((select json_agg(json_build_object('id', p.id, 'status', p.status, 'host_name', p.host_name, 'occasion', p.occasion,
+                          'day', p.day, 'start_time', p.start_time, 'end_time', p.end_time, 'guests', p.guests, 'package', p.package,
+                          'notes', p.notes, 'event_id', p.event_id) order by p.day)
+                        from parties p where p.status in ('hold','booked') and p.day >= _shift_day() - 1), '[]') end,
+    'settings', case when mgr then json_build_object(
+                  'party_deposit', (select value from app_settings where name = 'party_deposit'),
+                  'party_form_last', (select max(submitted_at) from parties where source = 'form')) else '{}'::json end,
     'log', coalesce((select json_agg(x order by x.at desc) from (
         select id, at, who, who_name, kind, text, place from log
          where mgr or kind <> 'ordered' order by at desc limit 1000) x), '[]')
@@ -732,7 +741,7 @@ declare tz text := 'America/New_York'; lnow timestamp := p_now at time zone tz; 
         sup suppliers; nx timestamptz; n_low int;
         r record; ov_title text[]; ov_body text[]; os_title text[]; os_body text[];
         total int; done_n int; missed text[]; n_over int; n_out int; body text; st time; due_now boolean;
-        endpoint_key text; quiet boolean; sw text[]; cv text[]; mgr boolean; nt text[]; nt_star boolean;
+        endpoint_key text; quiet boolean; sw text[]; cv text[]; mgr boolean; nt text[]; nt_star boolean; nt_party int;
 begin
   delete from push_sent where sent_at < p_now - interval '45 days';
   -- everyone who turned notifications on gets coverage alerts; the rest is for managers
@@ -871,8 +880,8 @@ begin
 
     -- 7. new tasks for this person: assigned to them, for one of their roles, or for everyone (not ones they added)
     if (p->>'tasks')::boolean and not quiet then
-      nt := '{}'; nt_star := false;
-      for r in select tk.id, tk.text, tk.important, tk.repeat, tk.due_date, tk.due_time, tk.assignee from tasks tk
+      nt := '{}'; nt_star := false; nt_party := 0;
+      for r in select tk.id, tk.text, tk.important, tk.repeat, tk.due_date, tk.due_time, tk.assignee, tk.party_step from tasks tk
                 where tk.added_at > p_now - interval '24 hours' and tk.added_at > sub.created_at - interval '1 hour'
                   and tk.added_by is distinct from sub.staff_id and not tk.done
                   and case when tk.assignee is not null then tk.assignee = sub.staff_id
@@ -883,6 +892,11 @@ begin
         insert into push_sent(key) values (k) on conflict do nothing; get diagnostics rc = row_count;
         continue when rc = 0;
         nt_star := nt_star or r.important;
+        if r.party_step = 'reply' then   -- a new party inquiry
+          nt_party := nt_party + 1;
+          nt := nt || substr(r.text, length('Reply to party inquiry: ') + 1);
+          continue;
+        end if;
         nt := nt || (case when r.important then '★ ' else '' end || r.text ||
                      case when r.repeat = 'daily' then ' · every day'
                           when r.due_date is not null and r.due_time is not null then ' · due ' || _fmt_due(_deadline(r.due_date, r.due_time), p_now)
@@ -893,11 +907,13 @@ begin
       end loop;
       if array_length(nt, 1) = 1 then
         out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
-          'title', case when nt_star then 'New important task' else 'New task' end, 'body', nt[1], 'url', './', 'tag', 'task');
+          'title', case when nt_party > 0 then 'New party inquiry' when nt_star then 'New important task' else 'New task' end, 'body', nt[1],
+          'url', case when nt_party > 0 then './#events' else './' end, 'tag', 'task');
       elsif array_length(nt, 1) > 1 then
         out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
-          'title', array_length(nt, 1) || ' new tasks', 'body', array_to_string(nt[1:3], '. ') || case when array_length(nt,1) > 3 then '…' else '' end,
-          'url', './', 'tag', 'task');
+          'title', array_length(nt, 1) || case when nt_party = array_length(nt, 1) then ' new party inquiries' else ' new tasks' end,
+          'body', array_to_string(nt[1:3], '. ') || case when array_length(nt,1) > 3 then '…' else '' end,
+          'url', case when nt_party = array_length(nt, 1) then './#events' else './' end, 'tag', 'task');
       end if;
     end if;
 
@@ -1470,6 +1486,7 @@ begin
   if nullif(p_id,'') is not null then
     select * into old from events where id = p_id;
     if not found then raise exception 'not_found'; end if;
+    if exists (select 1 from parties where event_id = p_id) then raise exception 'use_party'; end if;   -- change it from the party booking
     if rp is null then rp := old.repeat; un := old.repeat_until; end if;
     if pr is null and old.kind = k then pr := old.promote; end if;
   end if;
@@ -1514,13 +1531,305 @@ begin
                ev.title || ' on ' || to_char(p_day, 'Dy Mon FMDD'), 'Events');
 end $$;
 
--- Remove an event (managers). Its promotion tasks go with it.
+-- Remove an event (managers). Its promotion tasks go with it. Removing a party's event cancels the booking.
 create or replace function api_remove_event(p_token uuid, p_id text) returns void language plpgsql
 set search_path = public, extensions as $$
-declare me staff := _mgr(p_token); ev events;
+declare me staff := _mgr(p_token); ev events; pid text;
 begin
+  update parties set status = 'cancelled', decided_by_name = me.name, decided_at = now(), updated_at = now()
+   where event_id = p_id and status in ('hold','booked') returning id into pid;
   delete from events where id = p_id returning * into ev;
-  if found then perform _log(me, 'removed', ev.title, 'Events'); end if;
+  if found then perform _log(me, case when pid is null then 'removed' else 'cancelled' end, ev.title, case when pid is null then 'Events' else 'Parties' end); end if;
+  if pid is not null then perform _sync_party(pid, me.id, me.name); end if;
+end $$;
+
+-- ---------- party bookings (added Oct 2026) ----------
+-- Parties come in from the pub's Google Form (a small script on the form calls api_party_form), or a manager adds one.
+--   status: inquiry (waiting for a reply) | hold (date held, waiting on the deposit) | booked (deposit paid) | declined | cancelled
+-- Held and booked parties get a Party event on the calendar, and starred tasks for managers:
+--   inquiry: reply to it · hold: get the deposit · booked: confirm headcount 3 days before, set up on the day, thank them and settle up the day after.
+-- Staff see held and booked parties without the host's phone, email, deposit or manager notes.
+create table if not exists parties (
+  id text primary key default gen_random_uuid()::text,
+  status text not null default 'inquiry' check (status in ('inquiry','hold','booked','declined','cancelled')),
+  host_name text not null default '',
+  phone text not null default '',
+  email text not null default '',
+  occasion text not null default '',
+  day date,
+  backup_day date,
+  start_time time,
+  end_time time,
+  guests int,
+  guests_text text not null default '',       -- what they typed on the form, e.g. "30-40"
+  package text not null default '' check (package in ('','open_bar_food','open_bar','cash_bar','space')),
+  notes text not null default '',             -- what they asked for; staff see this
+  private_notes text not null default '',     -- managers only
+  deposit numeric,
+  deposit_paid_on date,
+  deposit_how text not null default '',
+  event_id text references events(id) on delete set null,
+  source text not null default 'manual' check (source in ('form','manual')),
+  form_id text unique,                        -- the Google Form response, so one is never added twice
+  submitted_at timestamptz not null default now(),
+  added_by text, added_by_name text,
+  decided_by_name text, decided_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+create index if not exists parties_day_idx on parties (day);
+alter table tasks add column if not exists party_id text references parties(id) on delete cascade;
+alter table tasks add column if not exists party_step text;
+-- Settings managers change in the app (party_deposit: the usual deposit, in dollars).
+create table if not exists app_settings (name text primary key, value jsonb not null);
+do $$
+declare t text;
+begin
+  foreach t in array array['parties','app_settings'] loop
+    execute format('alter table %I enable row level security', t);
+    execute format('revoke all on table %I from public', t);
+    if exists (select 1 from pg_roles where rolname='anon') then execute format('revoke all on table %I from anon', t); end if;
+    if exists (select 1 from pg_roles where rolname='authenticated') then execute format('revoke all on table %I from authenticated', t); end if;
+  end loop;
+end $$;
+-- The password the Google Form script sends. Made once, here; it never leaves the database except to set up the script.
+insert into app_secrets (name, value) values ('party_form_key', encode(extensions.gen_random_bytes(18), 'hex')) on conflict (name) do nothing;
+
+-- The role tasks for managers go to.
+create or replace function _mgr_role() returns text language sql stable
+set search_path = public, extensions as $$
+  select coalesce((select id from roles where id = 'manager'), (select id from roles where section = 'mgmt' order by sort, name limit 1))
+$$;
+
+-- "Sarah Miller" -> "Sarah M."
+create or replace function _short_name(p text) returns text language sql immutable as $$
+  select case when cardinality(w) = 0 then 'Guest'
+              when cardinality(w) = 1 then upper(left(w[1],1)) || substr(w[1],2)
+              else upper(left(w[1],1)) || substr(w[1],2) || ' ' || upper(left(w[cardinality(w)],1)) || '.' end
+    from (select coalesce(array_remove(regexp_split_to_array(trim(coalesce(p,'')), '\s+'), ''), '{}') w) x
+$$;
+
+-- What shows on the calendar: "Sarah M. · Birthday"
+create or replace function _party_title(p parties) returns text language sql immutable as $$
+  select _short_name(p.host_name) || case when coalesce(trim(p.occasion),'') = '' then '''s party' else ' · ' || trim(p.occasion) end
+$$;
+
+create or replace function _pkg_label(p text) returns text language sql immutable as $$
+  select case p when 'open_bar_food' then 'Open bar + food' when 'open_bar' then 'Open bar only'
+                when 'cash_bar' then 'Cash bar' when 'space' then 'Just the space' else '' end
+$$;
+
+-- Dates from the form: 2026-11-22 or 11/22/2026. Anything else is null.
+create or replace function _loose_date(p text) returns date language plpgsql immutable as $$
+declare s text := trim(coalesce(p,''));
+begin
+  if s ~ '^\d{4}-\d{1,2}-\d{1,2}' then return substring(s from '^\d{4}-\d{1,2}-\d{1,2}')::date; end if;
+  if s ~ '^\d{1,2}/\d{1,2}/\d{4}$' then return to_date(s, 'MM/DD/YYYY'); end if;
+  return null;
+exception when others then return null;
+end $$;
+
+-- Keep a party's calendar event and tasks in line with it. Returns how many new tasks it added.
+create or replace function _sync_party(p_id text, p_who_id text, p_who_name text) returns int language plpgsql
+set search_path = public, extensions as $$
+declare p parties; ev_id text; today date := _shift_day(); mrole text := _mgr_role(); n int := 0; i int; tk tasks;
+        who text; dstr text; dep numeric; steps text[] := '{}'; dues date[] := '{}'; labels text[] := '{}';
+begin
+  select * into p from parties where id = p_id;
+  if not found then return 0; end if;
+  who := _short_name(p.host_name);
+  dstr := coalesce(to_char(p.day, 'Dy Mon FMDD'), 'no date yet');
+
+  -- the calendar: held and booked parties are on it
+  if p.status in ('hold','booked') and p.day is not null then
+    if p.event_id is not null and exists (select 1 from events where id = p.event_id) then
+      update events set title = _party_title(p), kind = 'party', day = p.day, start_time = p.start_time, end_time = p.end_time,
+                        repeat = 'none', repeat_until = null, skip_dates = '{}', updated_at = now()
+       where id = p.event_id;
+    else
+      insert into events (title, kind, day, start_time, end_time, notes, added_by, added_by_name)
+      values (_party_title(p), 'party', p.day, p.start_time, p.end_time, '', p_who_id, coalesce(p_who_name, 'Party booking'))
+      returning id into ev_id;
+      update parties set event_id = ev_id where id = p.id;
+    end if;
+  elsif p.event_id is not null then
+    update parties set event_id = null where id = p.id;
+    delete from events where id = p.event_id;
+  end if;
+
+  -- the tasks this party needs right now
+  if p.status = 'inquiry' then
+    steps := array['reply'];
+    dues := array[coalesce(_shift_day_at(p.decided_at), _shift_day_at(p.submitted_at))];
+    labels := array['Reply to party inquiry: ' || who || coalesce(' · ' || nullif(trim(p.occasion),''), '') || ' · ' || dstr ||
+                    coalesce(' · ~' || p.guests || ' guests', '')];
+  elsif p.status = 'hold' then
+    dep := coalesce(p.deposit, (select (value #>> '{}')::numeric from app_settings where name = 'party_deposit'));
+    steps := array['deposit'];
+    dues := array[coalesce(_shift_day_at(p.decided_at), today)];
+    labels := array['Get the ' || coalesce('$' || trim(to_char(dep, 'FM999999990.99'), '.') || ' ', '') || 'deposit from ' || who ||
+                    ' to lock in ' || dstr || coalesce(' (' || nullif(trim(p.occasion),'') || ')', '')];
+  elsif p.status = 'booked' and p.day is not null then
+    steps := array['confirm','setup','thanks'];
+    dues := array[p.day - 3, p.day, p.day + 1];
+    labels := array['Call ' || who || ' to confirm headcount and package for ' || dstr,
+                    'Party today: ' || _party_title(p) || coalesce(', ~' || p.guests || ' guests', '') ||
+                      coalesce(', ' || to_char(p.start_time, 'FMHH12:MI AM'), '') || coalesce(' · ' || nullif(_pkg_label(p.package),''), ''),
+                    'Thank ' || who || ' and settle up for the party on ' || dstr];
+  end if;
+
+  delete from tasks where party_id = p.id and not done and not (party_step = any(steps));
+  for i in 1 .. coalesce(array_length(steps, 1), 0) loop
+    select * into tk from tasks where party_id = p.id and party_step = steps[i] limit 1;
+    if found then
+      if tk.due_date is distinct from dues[i] and dues[i] < today and steps[i] in ('confirm','setup','thanks') and not tk.done then
+        delete from tasks where id = tk.id;
+      elsif tk.due_date is distinct from dues[i] then
+        update tasks set text = labels[i], due_date = dues[i], done = false, done_day = null, done_due = null, done_until = null,
+                         done_by = null, done_by_name = null, done_at = null where id = tk.id;
+      else
+        update tasks set text = labels[i] where id = tk.id;
+      end if;
+    elsif dues[i] >= today or steps[i] in ('reply','deposit') then
+      insert into tasks (role_id, text, repeat, due_date, important, added_by, added_by_name, party_id, party_step, added_at)
+      values (mrole, labels[i], 'once', dues[i], true, p_who_id, coalesce(p_who_name, 'Party form'), p.id, steps[i], clock_timestamp());
+      n := n + 1;
+    end if;
+  end loop;
+  return n;
+end $$;
+
+-- An inquiry from the Google Form. The script sends the form's password (p_key) and the answers.
+-- Sending the same response twice does nothing. Inquiries for dates that have passed are skipped (returns null).
+create or replace function api_party_form(p_key text, p_data jsonb) returns text language plpgsql
+set search_path = public, extensions as $$
+declare k text; p parties; d date; b date; g int; raw text; pk text; pkraw text; fid text := left(nullif(trim(p_data->>'response_id'),''), 200);
+        sent timestamptz; notes text; n int;
+begin
+  select value into k from app_secrets where name = 'party_form_key';
+  if k is null or p_key is distinct from k then raise exception 'bad_key'; end if;
+  if fid is not null then
+    select * into p from parties where form_id = fid;
+    if found then return p.id; end if;
+  end if;
+  d := _loose_date(p_data->>'date'); b := _loose_date(p_data->>'backup');
+  if d is null then d := b; b := null; end if;
+  if d is null then raise exception 'bad_time'; end if;
+  if greatest(d, coalesce(b, d)) < _shift_day() then return null; end if;
+  if d < _shift_day() then d := b; b := null; end if;          -- first choice passed, back-up date hasn't
+  raw := left(trim(coalesce(p_data->>'guests','')), 60);
+  select max(left(m[1], 5)::int) into g from regexp_matches(raw, '(\d+)', 'g') m;   -- "30-40" -> 40
+  if g < 1 or g > 5000 then g := null; end if;
+  pkraw := trim(coalesce(p_data->>'package',''));
+  pk := case when pkraw ~* 'food' then 'open_bar_food' when pkraw ~* 'open bar' then 'open_bar'
+             when pkraw ~* 'cash' then 'cash_bar' when pkraw ~* 'space|reserv' then 'space' else '' end;
+  notes := left(trim(coalesce(p_data->>'notes','')), 2000);
+  if pk = '' and pkraw <> '' then notes := trim('Package: ' || left(pkraw, 100) || E'\n' || notes); end if;
+  begin sent := (p_data->>'submitted_at')::timestamptz; exception when others then sent := null; end;
+  if sent is null or sent > now() then sent := now(); end if;
+  insert into parties (status, host_name, phone, email, occasion, day, backup_day, start_time, guests, guests_text, package, notes,
+                       source, form_id, submitted_at)
+  values ('inquiry', left(trim(coalesce(p_data->>'name','')), 80), left(trim(coalesce(p_data->>'phone','')), 40),
+          left(trim(coalesce(p_data->>'email','')), 120), left(trim(coalesce(p_data->>'kind','')), 60), d, b,
+          _clean_time(p_data->>'start'), g, raw, pk, notes, 'form', fid, sent)
+  returning * into p;
+  insert into log (day, who, who_name, kind, text, place)
+  values (_shift_day(), null, coalesce(nullif(p.host_name,''), 'Someone'), 'inquiry',
+          coalesce(nullif(p.occasion,''), 'Party') || ' on ' || to_char(p.day, 'Dy Mon FMDD') || coalesce(', ~' || p.guests || ' guests', ''), 'Parties');
+  n := _sync_party(p.id, null, 'Party form');
+  if n > 0 then perform _push_kick(); end if;
+  return p.id;
+end $$;
+
+-- Add (p_id null) or change a party (managers). p_data holds the fields; a new one starts on hold, or booked if p_data.status = 'booked'.
+create or replace function api_save_party(p_token uuid, p_id text, p_data jsonb) returns text language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _mgr(p_token); p parties; old parties; n int; d date := _loose_date(p_data->>'day'); b date := _loose_date(p_data->>'backup_day');
+        pk text := coalesce(p_data->>'package',''); g int; dep numeric; st text := coalesce(p_data->>'status','hold');
+begin
+  if coalesce(trim(p_data->>'host_name'),'') = '' then raise exception 'empty'; end if;
+  if d is null then raise exception 'bad_time'; end if;
+  if pk not in ('open_bar_food','open_bar','cash_bar','space') then pk := ''; end if;
+  begin g := nullif(p_data->>'guests','')::int; exception when others then g := null; end;
+  if g is not null and (g < 1 or g > 5000) then g := null; end if;
+  begin dep := nullif(p_data->>'deposit','')::numeric; exception when others then dep := null; end;
+  if dep is not null and (dep < 0 or dep > 100000) then raise exception 'bad_amount'; end if;
+  if nullif(p_id,'') is null then
+    if st not in ('inquiry','hold','booked') then st := 'hold'; end if;
+    insert into parties (status, host_name, phone, email, occasion, day, backup_day, start_time, end_time, guests, package, notes, private_notes,
+                         deposit, deposit_paid_on, source, added_by, added_by_name, decided_by_name, decided_at)
+    values (st, left(trim(p_data->>'host_name'), 80), left(trim(coalesce(p_data->>'phone','')), 40), left(trim(coalesce(p_data->>'email','')), 120),
+            left(trim(coalesce(p_data->>'occasion','')), 60), d, b, _clean_time(p_data->>'start_time'), _clean_time(p_data->>'end_time'), g, pk,
+            left(trim(coalesce(p_data->>'notes','')), 2000), left(trim(coalesce(p_data->>'private_notes','')), 2000),
+            dep, case when st = 'booked' then _shift_day() end, 'manual', me.id, me.name, me.name, now())
+    returning * into p;
+    perform _log(me, 'added', _party_title(p) || ' on ' || to_char(p.day, 'Dy Mon FMDD'), 'Parties');
+  else
+    select * into old from parties where id = p_id for update;
+    if not found then raise exception 'not_found'; end if;
+    update parties set host_name = left(trim(p_data->>'host_name'), 80), phone = left(trim(coalesce(p_data->>'phone','')), 40),
+                       email = left(trim(coalesce(p_data->>'email','')), 120), occasion = left(trim(coalesce(p_data->>'occasion','')), 60),
+                       day = d, backup_day = b, start_time = _clean_time(p_data->>'start_time'), end_time = _clean_time(p_data->>'end_time'),
+                       guests = g, guests_text = case when g is distinct from old.guests then '' else guests_text end, package = pk,
+                       notes = left(trim(coalesce(p_data->>'notes','')), 2000), private_notes = left(trim(coalesce(p_data->>'private_notes','')), 2000),
+                       deposit = dep, updated_at = now()
+     where id = p_id returning * into p;
+    perform _log(me, 'edited', _party_title(p), 'Parties');
+  end if;
+  n := _sync_party(p.id, me.id, me.name);
+  if n > 0 then perform _push_kick(); end if;
+  return p.id;
+end $$;
+
+-- Move a party along (managers): hold a date (p_day picks the date, e.g. their back-up), book, decline, cancel, or reopen as an inquiry.
+create or replace function api_party_status(p_token uuid, p_id text, p_status text, p_day date default null) returns void language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _mgr(p_token); p parties; st text := lower(trim(coalesce(p_status,''))); n int;
+begin
+  if st not in ('inquiry','hold','booked','declined','cancelled') then raise exception 'bad_status'; end if;
+  select * into p from parties where id = p_id for update;
+  if not found then raise exception 'not_found'; end if;
+  if p.status = st and (p_day is null or p_day = p.day) then return; end if;   -- already that way
+  update parties set status = st,
+                     day = coalesce(p_day, day),
+                     backup_day = case when p_day is not null and p_day = backup_day then day else backup_day end,   -- picked their back-up: swap
+                     deposit_paid_on = case when st = 'booked' then coalesce(deposit_paid_on, _shift_day()) else deposit_paid_on end,
+                     decided_by_name = me.name, decided_at = now(), updated_at = now()
+   where id = p_id returning * into p;
+  perform _log(me, case st when 'hold' then 'held' when 'booked' then 'booked' when 'declined' then 'declined'
+                           when 'cancelled' then 'cancelled' else 'reopened' end,
+               _party_title(p) || ' on ' || to_char(p.day, 'Dy Mon FMDD'), 'Parties');
+  n := _sync_party(p.id, me.id, me.name);
+  if n > 0 then perform _push_kick(); end if;
+end $$;
+
+-- The deposit came in (managers): records it and books the party.
+create or replace function api_party_deposit(p_token uuid, p_id text, p_amount numeric, p_paid_on date default null, p_how text default '') returns void language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _mgr(p_token); p parties; n int;
+begin
+  if p_amount is null or p_amount < 0 or p_amount > 100000 then raise exception 'bad_amount'; end if;
+  select * into p from parties where id = p_id for update;
+  if not found or p.status not in ('inquiry','hold','booked') then raise exception 'not_found'; end if;
+  update parties set deposit = p_amount, deposit_paid_on = coalesce(p_paid_on, _shift_day()), deposit_how = left(trim(coalesce(p_how,'')), 30),
+                     status = 'booked', decided_by_name = me.name, decided_at = now(), updated_at = now()
+   where id = p_id returning * into p;
+  perform _log(me, 'deposit', _party_title(p) || ' on ' || to_char(p.day, 'Dy Mon FMDD') ||
+               ' ($' || trim(to_char(p_amount, 'FM999999990.99'), '.') || ')', 'Parties');
+  n := _sync_party(p.id, me.id, me.name);
+  if n > 0 then perform _push_kick(); end if;
+end $$;
+
+-- Change a setting (managers). party_deposit: a dollar amount, or null to clear it.
+create or replace function api_set_setting(p_token uuid, p_name text, p_value jsonb) returns void language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _mgr(p_token); v numeric;
+begin
+  if p_name is distinct from 'party_deposit' then raise exception 'not_found'; end if;
+  if p_value is null or p_value = 'null'::jsonb then delete from app_settings where name = p_name; return; end if;
+  begin v := (p_value #>> '{}')::numeric; exception when others then raise exception 'bad_amount'; end;
+  if v is null or v < 0 or v > 100000 then raise exception 'bad_amount'; end if;
+  insert into app_settings (name, value) values (p_name, to_jsonb(v)) on conflict (name) do update set value = excluded.value;
+  perform _log(me, 'edited', 'the party deposit ($' || trim(to_char(v, 'FM999999990.99'), '.') || ')', 'Parties');
 end $$;
 
 -- ---------- who may call what ----------
