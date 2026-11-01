@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 42;
+const APP_VERSION = 43;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -226,7 +226,15 @@ function buttonize(sel){
     if (v && openDrop && openDrop !== shut) closeDrop();
     open = v; openDrop = v ? shut : (openDrop===shut ? null : openDrop);
     list.hidden = !v; btn.setAttribute("aria-expanded", String(v)); wrap.classList.toggle("open", v);
-    if (v){ const c = list.querySelector('[aria-checked="true"]') || list.querySelector("button"); if (c) c.focus({preventScroll:true}); }
+    if (v){
+      const c = list.querySelector('[aria-checked="true"]') || list.querySelector("button"); if (c) c.focus({preventScroll:true});
+      /* bring the opened list to the middle of the screen (or its top, if it's taller than the screen) */
+      requestAnimationFrame(()=>{
+        const tall = wrap.getBoundingClientRect().height > window.innerHeight * 0.75;
+        const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        wrap.scrollIntoView({block: tall ? "start" : "center", behavior: calm ? "auto" : "smooth"});
+      });
+    }
   };
   const shut = () => setOpen(false);
   btn.addEventListener("click", e=>{ e.preventDefault(); setOpen(!open); });

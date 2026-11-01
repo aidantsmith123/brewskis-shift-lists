@@ -1,5 +1,5 @@
 {
-  "version": 42,
+  "version": 43,
   "date": "2026-11-01",
-  "notes": "No more zooming: pinching, double-tapping and typing in a box no longer zoom the app."
+  "notes": "Opening a pick-list scrolls it to the middle of the screen, so the choices are right in front of you."
 }
