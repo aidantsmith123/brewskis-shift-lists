@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 38;
+const APP_VERSION = 39;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -2238,7 +2238,7 @@ function openDepositForm(p){
   const err = h("p",{class:"loginerr", role:"alert"});
   openSheet(
     h("h2",{text:"Deposit for "+partyWho(p)}),
-    h("p",{class:"hint", style:"margin:0", text:"Books the party for "+(p.day ? longDay(p.day) : "their date")+". You'll get tasks to confirm the headcount 3 days before, set up on the day, and settle up after."}),
+    h("p",{class:"hint", style:"margin:0", text:"Books the party for "+(p.day ? longDay(p.day) : "their date")+"."}),
     h("label",{class:"lbl", for:"depAmount"}, "Amount ($)", amt),
     h("fieldset",{class:"choices"}, h("legend",{class:"lbl", text:"Paid by (optional)"}), seg),
     h("label",{class:"lbl", for:"depDay"}, "Paid on", day),

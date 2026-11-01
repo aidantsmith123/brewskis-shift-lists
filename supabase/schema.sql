@@ -1583,8 +1583,8 @@ end $$;
 -- ---------- party bookings (added Oct 2026) ----------
 -- Parties come in from the pub's Google Form (a small script on the form calls api_party_form), or a manager adds one.
 --   status: inquiry (waiting for a reply) | hold (date held, waiting on the deposit) | booked (deposit paid) | declined | cancelled
--- Held and booked parties get a Party event on the calendar, and starred tasks for managers:
---   inquiry: reply to it · hold: get the deposit · booked: confirm headcount 3 days before, set up on the day, thank them and settle up the day after.
+-- Held and booked parties get a Party event on the calendar. A new inquiry gets a starred "reply to it" task for managers
+-- (v39: holds and bookings no longer add deposit, headcount, party-day or thank-you tasks).
 -- Staff see held and booked parties without the host's phone, email, deposit or manager notes.
 create table if not exists parties (
   id text primary key default gen_random_uuid()::text,
@@ -1630,6 +1630,9 @@ begin
 end $$;
 -- The password the Google Form script sends. Made once, here; it never leaves the database except to set up the script.
 insert into app_secrets (name, value) values ('party_form_key', encode(extensions.gen_random_bytes(18), 'hex')) on conflict (name) do nothing;
+
+-- v39: only inquiries get a task now; clear the open deposit, headcount, party-day and thank-you tasks.
+delete from tasks where party_id is not null and party_step in ('deposit','confirm','setup','thanks') and not done;
 
 -- The role tasks for managers go to.
 create or replace function _mgr_role() returns text language sql stable
@@ -1699,19 +1702,6 @@ begin
     dues := array[coalesce(_shift_day_at(p.decided_at), _shift_day_at(p.submitted_at))];
     labels := array['Reply to party inquiry: ' || who || coalesce(' · ' || nullif(trim(p.occasion),''), '') || ' · ' || dstr ||
                     coalesce(' · ~' || p.guests || ' guests', '')];
-  elsif p.status = 'hold' then
-    dep := coalesce(p.deposit, (select (value #>> '{}')::numeric from app_settings where name = 'party_deposit'));
-    steps := array['deposit'];
-    dues := array[coalesce(_shift_day_at(p.decided_at), today)];
-    labels := array['Get the ' || coalesce('$' || trim(to_char(dep, 'FM999999990.99'), '.') || ' ', '') || 'deposit from ' || who ||
-                    ' to lock in ' || dstr || coalesce(' (' || nullif(trim(p.occasion),'') || ')', '')];
-  elsif p.status = 'booked' and p.day is not null then
-    steps := array['confirm','setup','thanks'];
-    dues := array[p.day - 3, p.day, p.day + 1];
-    labels := array['Call ' || who || ' to confirm headcount and package for ' || dstr,
-                    'Party today: ' || _party_title(p) || coalesce(', ~' || p.guests || ' guests', '') ||
-                      coalesce(', ' || to_char(p.start_time, 'FMHH12:MI AM'), '') || coalesce(' · ' || nullif(_pkg_label(p.package),''), ''),
-                    'Thank ' || who || ' and settle up for the party on ' || dstr];
   end if;
 
   delete from tasks where party_id = p.id and not done and not (party_step = any(steps));

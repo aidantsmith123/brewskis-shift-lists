@@ -1,5 +1,5 @@
 {
-  "version": 38,
+  "version": 39,
   "date": "2026-11-01",
-  "notes": "Simpler cash-out: after closing the drawer in Toast, the bartender just says whether it's short and by how much. Managers see what needs replenishing and mark it done."
+  "notes": "Party bookings only add the \"Reply to party inquiry\" task now; holds and bookings no longer add deposit, headcount, party-day or thank-you tasks."
 }
