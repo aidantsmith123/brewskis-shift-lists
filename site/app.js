@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 36;
+const APP_VERSION = 37;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -2338,10 +2338,10 @@ function openDepositSetting(){
 }
 
 /* ---------- cash-out at close ----------
-   Managers set up the drawers and each one's starting bank. At close the bartender counts a drawer bill by bill
-   (before pulling tips) and types in the cash sales and card tips from Toast. The app works out:
-     expected = bank + cash sales - paid outs     over/short = counted - expected
-     then: pay out the card tips, leave the bank, drop the rest.
+   Managers set up the drawers and each one's starting bank. Card tips get pulled during the shift, so at close the
+   bartender counts what's left bill by bill and types in the cash sales and card tips from Toast. The app works out:
+     expected = bank + cash sales - card tips paid out - paid outs     over/short = counted - expected
+     then: leave the bank, drop the rest.
    Managers get an alert when a drawer is off by more than the tolerance, and a history of every night. */
 const BILLS = [100,50,20,10,5,1];
 const drawers = () => D().drawers || [];
@@ -2423,27 +2423,27 @@ function openCashOut(dr, day){
     BILLS.forEach(x=>{ const n = Math.max(0, Math.floor(val(billIn[x]))); billSub[x].textContent = n ? cash(n*x) : ""; });
     const c = counted(); total.textContent = cash(c);
     if (sales.value.trim()===""){ res.replaceChildren(h("p",{class:"hint", style:"margin:0", text:"Enter the cash sales from Toast to see if the drawer balances."})); return; }
-    const exp = cents(val(bank) + val(sales) - val(pouts)), diff = cents(c - exp), r = cashResult(diff), drop = cents(c - val(bank) - val(tips));
+    const exp = cents(val(bank) + val(sales) - val(tips) - val(pouts)), diff = cents(c - exp), r = cashResult(diff), drop = cents(c - val(bank));
     res.replaceChildren(...[
       h("div",{class:"row cr-top"}, h("span",{class:"hint", text:"Should be "+cash(exp)}), h("span",{class:"tag big "+r.cls, text:r.text})),
       h("ol",{class:"cr-steps"},
-        val(tips) > 0 ? h("li",{}, h("span",{text:"Pay out card tips"}), h("b",{text:cash(val(tips))})) : null,
         h("li",{}, h("span",{text:"Leave the bank"}), h("b",{text:cash(val(bank))})),
         h("li",{}, h("span",{text:"Drop in the safe"}), h("b",{text: drop < 0 ? "$0" : cash(drop)}))),
-      drop < 0 ? h("p",{class:"warnline", text:"There isn't enough cash to cover the tips and the bank ("+cash(drop)+" short). Leave a note for a manager."}) : null].filter(Boolean));
+      drop < 0 ? h("p",{class:"warnline", text:"There's less than the bank in the drawer ("+cash(drop)+" short of it). Leave a note for a manager."}) : null].filter(Boolean));
   };
   [...Object.values(billIn), coins, sales, tips, bank, pouts].forEach(el=>el.addEventListener("input", sync));
   const err = h("p",{class:"loginerr", role:"alert"});
   const morePouts = !!(prev && (prev.paid_outs > 0 || prev.paid_out_note));
   openSheet(
     h("h2",{text:"Cash out: "+dr.name}),
-    h("p",{class:"hint", style:"margin:-4px 0 0", text: (day!==shiftDay() ? "For "+longDay(day)+". " : "")+(prev ? "Counted by "+prev.by_name+" "+when(prev.at)+". Saving replaces it." : "Count everything in the drawer before you pull tips.")}),
+    h("p",{class:"hint", style:"margin:-4px 0 0", text: (day!==shiftDay() ? "For "+longDay(day)+". " : "")+(prev ? "Counted by "+prev.by_name+" "+when(prev.at)+". Saving replaces it." : "Make sure everyone's pulled their card tips, then count what's left.")}),
     h("section",{class:"cstep"}, h("h3",{text:"1. Count the drawer"}),
       h("div",{class:"bills"}, billRows,
         h("div",{class:"billrow"}, h("label",{for:"cbCoins", class:"bden", text:"Coins"}), h("span",{class:"bx", "aria-hidden":"true", text:"$"}), coins, h("span",{class:"bsub"}))),
       h("div",{class:"row ctotalrow"}, h("span",{text:"Counted"}), total)),
     h("section",{class:"cstep"}, h("h3",{text:"2. From Toast's report"}),
-      h("div",{class:"inline"}, h("label",{class:"lbl", for:"cbSales", style:"flex:1"}, "Cash sales ($)", sales), h("label",{class:"lbl", for:"cbTips", style:"flex:1"}, "Card tips ($)", tips)),
+      h("div",{class:"inline"}, h("label",{class:"lbl", for:"cbSales", style:"flex:1"}, "Cash sales ($)", sales), h("label",{class:"lbl", for:"cbTips", style:"flex:1"}, "Card tips paid out ($)", tips)),
+      h("p",{class:"hint", style:"margin:-4px 0 0", text:"All the card tips taken out of this drawer tonight, including yours."}),
       h("div",{class:"inline"}, h("label",{class:"lbl", for:"cbBank", style:"flex:1"}, "Starting bank ($)", bank), h("span",{style:"flex:1"})),
       h("details",{class:"pouts", open:morePouts}, h("summary",{text:"Paid out cash for something?"}),
         h("div",{class:"inline"}, h("label",{class:"lbl", for:"cbPouts", style:"flex:1"}, "Paid out ($)", pouts), h("label",{class:"lbl", for:"cbPoutNote", style:"flex:2"}, "For", poutNote)))),
@@ -2478,7 +2478,6 @@ function openCashDone(c){
       h("span",{class:"hint", text:"Counted "+cash(c.counted)+" · should be "+cash(c.expected)})),
     r.off ? h("p",{class:"hint", style:"margin:0", text:"Managers have been told. Count it once more if you can; tap the drawer in the Drawers tab to fix the count."}) : null,
     h("ol",{class:"cr-steps"},
-      Number(c.card_tips) > 0 ? h("li",{}, h("span",{text:"Pay out card tips"}), h("b",{text:cash(c.card_tips)})) : null,
       h("li",{}, h("span",{text:"Leave the bank"}), h("b",{text:cash(c.bank)})),
       h("li",{}, h("span",{text:"Drop in the safe"}), h("b",{text: drop < 0 ? "$0" : cash(drop)}))),
     h("button",{type:"button", class:"btn", onclick:closeSheet},"Done"));
@@ -2493,9 +2492,9 @@ function openCashDetail(c){
     h("h2",{text:c.drawer_name+" · "+shortDay(c.day)}),
     h("div",{class:"pfacts"},
       fact("Counted", cash(c.counted)),
-      fact("Should be", cash(c.expected)+" = "+cash(c.bank)+" bank + "+cash(c.cash_sales)+" cash sales"+(Number(c.paid_outs) ? " − "+cash(c.paid_outs)+" paid out" : "")),
+      fact("Should be", cash(c.expected)+" = "+cash(c.bank)+" bank + "+cash(c.cash_sales)+" cash sales"+(Number(c.card_tips) ? " − "+cash(c.card_tips)+" card tips" : "")+(Number(c.paid_outs) ? " − "+cash(c.paid_outs)+" paid out" : "")),
       Number(c.paid_outs) ? fact("Paid out", cash(c.paid_outs)+(c.paid_out_note ? " · "+c.paid_out_note : "")) : null,
-      fact("Card tips", cash(c.card_tips)),
+      fact("Card tips", cash(c.card_tips)+" paid out"),
       fact("Dropped", cash(Math.max(0, c.drop_amt))),
       fact("Bills", billsText(c.bills)),
       fact("Note", c.note)),
@@ -2548,7 +2547,7 @@ function openCashTolSetting(){
 
 function cashCsv(list){
   const q = v => { const s = String(v==null ? "" : v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
-  const rows = [["Date","Drawer","Counted by","Starting bank","Cash sales","Card tips","Paid outs","Paid out for","Counted","Should be","Over/short","Dropped","Note"]];
+  const rows = [["Date","Drawer","Counted by","Starting bank","Cash sales","Card tips paid out","Paid outs","Paid out for","Counted","Should be","Over/short","Dropped","Note"]];
   list.slice().sort((a,b)=>a.day.localeCompare(b.day)||a.drawer_name.localeCompare(b.drawer_name)).forEach(c=>rows.push([c.day, c.drawer_name, c.by_name, c.bank, c.cash_sales, c.card_tips, c.paid_outs, c.paid_out_note, c.counted, c.expected, c.diff, Math.max(0, c.drop_amt), c.note]));
   return rows.map(r=>r.map(q).join(",")).join("\n");
 }
@@ -2590,7 +2589,7 @@ function viewCash(){
       if (c) return admin ? cashRow(c) : cashRow(c, ()=>openCashOut(d));
       return h("div",{class:"cashrow todo"}, h("span",{class:"t"}, h("b",{text:d.name}), h("span",{class:"hint", text:"Not counted yet · "+cash(d.bank)+" bank"})),
         canWrite() ? h("button",{type:"button", class:"btn small"+(late ? "" : " ghost"), onclick:()=>openCashOut(d)},"Count") : null); }),
-    h("p",{class:"hint", style:"margin:0", text: admin ? "Tap a count to see the breakdown or fix it." : "Count each drawer at close, before you pull tips. Tap a count to redo it."})));
+    h("p",{class:"hint", style:"margin:0", text: admin ? "Tap a count to see the breakdown or fix it." : "Count each drawer at close, once the card tips are pulled. Tap a count to redo it."})));
   if (!admin) return out;
   /* history */
   const range = S.cashRange || 30, from = addDays(today, -range);

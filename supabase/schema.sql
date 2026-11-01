@@ -1875,10 +1875,10 @@ begin
 end $$;
 
 -- ---------- cash-out at close (added Nov 2026) ----------
--- Managers set up the cash drawers and each one's starting bank. At close, a bartender counts a drawer bill by bill
--- (before pulling tips) and types in the cash sales and card tips from Toast's report:
---   expected = bank + cash sales - paid outs      over/short = counted - expected
---   then: pay out the card tips, leave the bank, and drop the rest (counted - bank - card tips).
+-- Managers set up the cash drawers and each one's starting bank. Card tips get pulled from the drawer during the
+-- shift, so at close a bartender counts what's left bill by bill and types in the cash sales and card tips from Toast:
+--   expected = bank + cash sales - card tips paid out - paid outs      over/short = counted - expected
+--   then: leave the bank and drop the rest (counted - bank).
 -- One cash-out per drawer per shift day; counting again replaces it. Managers get an alert when one is off by more
 -- than the cash_tolerance setting (default $5), and see every night's cash-outs. Staff only see tonight's.
 create table if not exists drawers (
@@ -1896,14 +1896,14 @@ create table if not exists cashouts (
   drawer_name text not null,
   bank numeric not null default 0,
   cash_sales numeric not null default 0,      -- from Toast
-  card_tips numeric not null default 0,       -- from Toast; paid out of the drawer
+  card_tips numeric not null default 0,       -- from Toast; already paid out of the drawer during the shift
   paid_outs numeric not null default 0,       -- cash taken out for something else (a delivery, the DJ…)
   paid_out_note text not null default '',
   bills jsonb not null default '{}',          -- {"100":2,"50":1,"20":31,...,"coins":4.35}
   counted numeric not null default 0,
   expected numeric not null default 0,
   diff numeric not null default 0,            -- counted - expected: + over, - short
-  drop_amt numeric not null default 0,        -- counted - bank - card tips
+  drop_amt numeric not null default 0,        -- counted - bank
   note text not null default '',
   by_id text, by_name text,
   at timestamptz not null default now(),
@@ -1912,6 +1912,16 @@ create table if not exists cashouts (
   unique (day, drawer_id)
 );
 create index if not exists cashouts_day_idx on cashouts (day desc);
+-- v37: card tips come out during the shift. Counts saved before that change are refigured the new way.
+do $$
+begin
+  if not exists (select 1 from app_settings where name = 'cash_math_v37') then
+    update cashouts set expected = bank + cash_sales - card_tips - paid_outs,
+                        diff = counted - (bank + cash_sales - card_tips - paid_outs),
+                        drop_amt = counted - bank;
+    insert into app_settings (name, value) values ('cash_math_v37', 'true');
+  end if;
+end $$;
 do $$
 declare t text;
 begin
@@ -2002,11 +2012,11 @@ begin
   exception when others then raise exception 'bad_amount'; end;
   if sales is null then raise exception 'need_sales'; end if;
   if sales < 0 or sales > 1000000 or tips < 0 or tips > 1000000 or pouts < 0 or pouts > 1000000 or bank < 0 or bank > 100000 then raise exception 'bad_amount'; end if;
-  expected := bank + sales - pouts;
+  expected := bank + sales - tips - pouts;
   select * into old from cashouts where day = d and drawer_id = dr.id for update;
   insert into cashouts (day, drawer_id, drawer_name, bank, cash_sales, card_tips, paid_outs, paid_out_note, bills, counted, expected, diff, drop_amt, note, by_id, by_name)
   values (d, dr.id, dr.name, bank, sales, tips, pouts, left(trim(coalesce(p_data->>'paid_out_note','')), 200), bills, counted, expected,
-          counted - expected, counted - bank - tips, left(trim(coalesce(p_data->>'note','')), 1000), me.id, me.name)
+          counted - expected, counted - bank, left(trim(coalesce(p_data->>'note','')), 1000), me.id, me.name)
   on conflict (day, drawer_id) do update set drawer_name = excluded.drawer_name, bank = excluded.bank, cash_sales = excluded.cash_sales,
      card_tips = excluded.card_tips, paid_outs = excluded.paid_outs, paid_out_note = excluded.paid_out_note, bills = excluded.bills,
      counted = excluded.counted, expected = excluded.expected, diff = excluded.diff, drop_amt = excluded.drop_amt, note = excluded.note,

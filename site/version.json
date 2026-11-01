@@ -1,5 +1,5 @@
 {
-  "version": 36,
+  "version": 37,
   "date": "2026-11-01",
-  "notes": "Drawers tab: count tonight's drawers, see each one's result, and (managers) the history and drawer setup, all in one place."
+  "notes": "Cash-out now counts card tips as already pulled during the shift: count what's left at close, and the app subtracts the tips from what the drawer should hold."
 }
