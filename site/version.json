@@ -1,5 +1,5 @@
 {
-  "version": 40,
+  "version": 41,
   "date": "2026-11-01",
-  "notes": "Pick-lists are buttons now: roles, people, repeats, packages, suppliers and the rest show every choice as a button instead of a pull-down menu."
+  "notes": "Pick-lists are compact again: each one shows your choice with a ▾, and tapping it opens the choices underneath as buttons."
 }

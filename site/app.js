@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 40;
+const APP_VERSION = 41;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -208,30 +208,51 @@ function logOut(msg){
   render();
 }
 
-/* ---------- pick-lists as buttons ----------
-   Every <select> in the app is shown as a row of buttons instead of a pull-down menu. The select stays in the page,
-   hidden, so the code that builds it, reads .value or listens for "change" works the same. */
+/* ---------- pick-lists: a compact field that opens into buttons ----------
+   Every <select> in the app shows as one field with the current choice and a ▾. Tapping it opens the choices right
+   underneath as buttons; picking one closes it again. The select stays in the page, hidden, so the code that builds it,
+   reads .value or listens for "change" works the same. */
 const nativeValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+let openDrop = null;
+function closeDrop(){ if (openDrop){ const d = openDrop; openDrop = null; d(); } }
 function buttonize(sel){
   if (sel._pick || sel.dataset.native) return;
-  const box = h("div",{class:"btnpick", role:"radiogroup"});
-  const lbl = sel.closest("label"); if (lbl) box.setAttribute("aria-label", (lbl.firstChild && lbl.firstChild.nodeType===3 ? lbl.firstChild.textContent : sel.id).trim());
+  let open = false;
+  const cur = h("span",{class:"dv"}), btn = h("button",{type:"button", class:"dropbtn", "aria-expanded":"false"}, cur, h("span",{class:"dchev", "aria-hidden":"true"}));
+  const list = h("div",{class:"btnpick", role:"radiogroup", hidden:true});
+  const wrap = h("div",{class:"drop"}, btn, list);
+  const lbl = sel.closest("label"); if (lbl){ const t = (lbl.firstChild && lbl.firstChild.nodeType===3 ? lbl.firstChild.textContent : "").trim(); if (t){ list.setAttribute("aria-label", t); btn.setAttribute("aria-label", t); } }
+  const setOpen = v => {
+    if (v && openDrop && openDrop !== shut) closeDrop();
+    open = v; openDrop = v ? shut : (openDrop===shut ? null : openDrop);
+    list.hidden = !v; btn.setAttribute("aria-expanded", String(v)); wrap.classList.toggle("open", v);
+    if (v){ const c = list.querySelector('[aria-checked="true"]') || list.querySelector("button"); if (c) c.focus({preventScroll:true}); }
+  };
+  const shut = () => setOpen(false);
+  btn.addEventListener("click", e=>{ e.preventDefault(); setOpen(!open); });
   const draw = () => {
-    box.hidden = sel.hidden;
-    box.replaceChildren(...[...sel.options].map(o=>h("button",{type:"button", role:"radio", "aria-checked":String(o.value===nativeValue.get.call(sel)),
-      disabled: sel.disabled || o.disabled, "data-value":o.value, onclick:()=>{
+    wrap.hidden = sel.hidden;
+    const v = nativeValue.get.call(sel), o = [...sel.options].find(x=>x.value===v) || sel.options[0];
+    cur.textContent = o ? o.textContent : "";
+    btn.disabled = sel.disabled;
+    list.replaceChildren(...[...sel.options].map(o=>h("button",{type:"button", role:"radio", "aria-checked":String(o.value===v),
+      disabled: sel.disabled || o.disabled, "data-value":o.value, onclick:e=>{
+        e.preventDefault(); setOpen(false); btn.focus({preventScroll:true});
         if (o.value===nativeValue.get.call(sel)) return;
         nativeValue.set.call(sel, o.value); draw();
         sel.dispatchEvent(new Event("input",{bubbles:true})); sel.dispatchEvent(new Event("change",{bubbles:true}));
       }}, o.textContent)));
   };
-  /* code that sets .value directly, or swaps the options, redraws the buttons */
+  /* code that sets .value directly, or swaps the options, redraws it */
   Object.defineProperty(sel, "value", {configurable:true, get(){ return nativeValue.get.call(sel); }, set(v){ nativeValue.set.call(sel, v); draw(); }});
   new MutationObserver(draw).observe(sel, {childList:true, subtree:true, attributes:true, attributeFilter:["disabled","selected","hidden"]});
   sel.addEventListener("change", draw);
-  sel._pick = box; sel.classList.add("picked"); sel.setAttribute("aria-hidden","true"); sel.tabIndex = -1;
-  sel.after(box); draw();
+  sel._pick = wrap; sel.classList.add("picked"); sel.setAttribute("aria-hidden","true"); sel.tabIndex = -1;
+  sel.after(wrap); draw();
 }
+/* tap anywhere else, or press Escape, to close an open list */
+document.addEventListener("click", e=>{ if (openDrop && !(e.target.closest && e.target.closest(".drop.open"))) closeDrop(); }, true);
+document.addEventListener("keydown", e=>{ if (e.key==="Escape" && openDrop){ closeDrop(); e.stopPropagation(); } }, true);
 new MutationObserver(muts=>{ for (const m of muts) for (const n of m.addedNodes){
   if (n.nodeType!==1) continue;
   if (n.tagName==="SELECT") buttonize(n); else if (n.querySelectorAll) n.querySelectorAll("select").forEach(buttonize);
@@ -2636,9 +2657,9 @@ window.addEventListener("appinstalled", ()=>{ S.installEvent = null; render(); t
 setInterval(()=>{
   if (document.hidden || !S.session) return;
   const typing = document.activeElement && document.activeElement.matches && document.activeElement.matches("input,select,textarea");
-  if (!typing && !Object.keys(S.countDraft).length) refresh();
+  if (!typing && !openDrop && !Object.keys(S.countDraft).length) refresh();
 }, POLL_MS);
-setInterval(()=>{ if (!document.hidden && !(document.activeElement && document.activeElement.matches && document.activeElement.matches("input,select,textarea"))) render(); }, 60000);
+setInterval(()=>{ if (!document.hidden && !openDrop && !(document.activeElement && document.activeElement.matches && document.activeElement.matches("input,select,textarea"))) render(); }, 60000);
 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")){
   navigator.serviceWorker.register("sw.js").catch(()=>{});

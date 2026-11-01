@@ -931,6 +931,22 @@ select.picked{display:none !important}
 .btnpick button:disabled{opacity:.45;cursor:default}
 .btnpick button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 @media (prefers-reduced-motion:no-preference){ .btnpick button{transition:background-color .15s,border-color .15s,transform .08s} .btnpick button:active:not(:disabled){transform:scale(.96)} }
-/* a field with buttons gets its own full-width row, even in a two-column form */
-.lbl:has(> select.picked){grid-column:1/-1;flex:1 1 100% !important;min-width:0}
 .btnpick[hidden]{display:none}
+
+/* v41: pick-lists are a compact field that opens into the buttons */
+.drop{display:flex;flex-direction:column;gap:6px;margin-top:2px;min-width:0}
+.drop[hidden]{display:none}
+.dropbtn{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:46px;padding:10px 14px;
+  border:1.5px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);font:inherit;font-size:16px;font-weight:600;text-align:left;cursor:pointer}
+.dropbtn .dv{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dchev{flex:none;width:9px;height:9px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:translateY(-3px) rotate(45deg);transition:transform .18s}
+.drop.open .dropbtn{border-color:var(--blue);box-shadow:inset 0 0 0 1px var(--blue)}
+.drop.open .dchev{transform:translateY(2px) rotate(-135deg);border-color:var(--blue)}
+.dropbtn:disabled{opacity:.5;cursor:default}
+.dropbtn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.drop .btnpick{margin:0;padding:10px;border:1px solid var(--line);border-radius:14px;background:var(--soft)}
+.drop .btnpick[hidden]{display:none}
+@media (prefers-reduced-motion:no-preference){ .drop.open .btnpick{animation:dropin .16s ease-out} }
+@keyframes dropin{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.lbl:has(> select.picked){min-width:0}
+.inline:has(.drop.open),.add:has(.drop.open){align-items:start}
