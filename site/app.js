@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 37;
+const APP_VERSION = 38;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -77,7 +77,7 @@ function errMsg(e){
     use_party:"This is a party booking. Change it from the booking.",
     bad_status:"Couldn't change that. Try again.",
     foh_only:"Only front-of-house staff and managers can cash out.",
-    need_sales:"Enter the cash sales from Toast.",
+    need_amount:"Enter how much it's short.",
     name_taken:"There's already a drawer with that name."
   })[c] || "Couldn't save. Try again in a moment.";
 }
@@ -682,7 +682,7 @@ function viewNotify(){
         h("li",{text:"New tasks for you, your role, or everyone"}),
         h("li",{text:"Order deadlines coming up that haven't been ordered"}),
         h("li",{text:"Tasks that go overdue, and items counted at zero"}),
-        h("li",{text:"A drawer that comes up short or over at close"}),
+        h("li",{text:"A drawer that comes up short at close"}),
         h("li",{text:"A recap of each shift day's tasks"}))
       : h("ul",{class:"steps"},
         h("li",{text:"Right away when a shift you can work needs coverage"}),
@@ -707,8 +707,8 @@ function viewNotify(){
           [[1,"1 hour before"],[2,"2 hours before"],[4,"4 hours before"],[24,"1 day before"]].map(([v,l])=>h("option",{value:v, selected:Number(p.lead_hours)===v}, l))))),
     prefRow("overdue", "Overdue tasks", "When a task passes its due date or due time without being checked off. One alert per task."),
     prefRow("out", "Out of stock", "When someone counts an item at 0."),
-    prefRow("cash", "Cash-outs", "When a drawer comes up short or over by more than "+cash(cashTol())+"."),
-    prefRow("summary", "Nightly recap", "How many tasks got checked off in the shift day that just ended, what's overdue, and whether the cash balanced.",
+    prefRow("cash", "Short drawers", "When a drawer comes up short at close."),
+    prefRow("summary", "Nightly recap", "How many tasks got checked off in the shift day that just ended, what's overdue, and any drawer that came up short.",
       h("label",{class:"lbl", for:"pfRecap"}, "Send at", timeInput("pfRecap","summary_time"))),
     prefRow("quiet", "Quiet hours", "Alerts wait until quiet hours end. The recap still arrives at the time you picked.",
       h("div",{class:"inline"}, h("label",{class:"lbl", for:"pfQs"}, "From", timeInput("pfQs","quiet_start")), h("label",{class:"lbl", for:"pfQe"}, "To", timeInput("pfQe","quiet_end"))))));
@@ -920,7 +920,7 @@ function tonightCard(all){
     rows.push(boardRow("tn-event ev-"+e.kind, e.title, e.day===today ? (t || "Today") : "Tomorrow"+(t ? " "+t : ""), ()=>{ go("events"); openEventSheet(e); }));
   }
   /* cash-out at close */
-  const cr = cashBoardRow(today, now); if (cr) rows.push(cr);
+  rows.push(...cashBoardRows(today));
   /* managers: the next order deadline */
   if (isAdmin() && D().suppliers.length){
     const nx = suppliersByDeadline().find(x=>x.d && !x.ordered);
@@ -986,7 +986,7 @@ function viewOverview(){
 function activitySection(){
   const admin = isAdmin();
   const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked", shift_posted:" asked for coverage on %", shift_taken:" is covering %", skipped:" called off %", unskipped:" brought back %",
-                inquiry:" asked about a party: %", held:" put a hold on %", booked:" booked %", declined:" declined %", cancelled:" cancelled %", reopened:" reopened %", deposit:" took the deposit for %", cashout:" cashed out %", recount:" recounted %"};
+                inquiry:" asked about a party: %", held:" put a hold on %", booked:" booked %", declined:" declined %", cancelled:" cancelled %", reopened:" reopened %", deposit:" took the deposit for %", cashout:" cashed out %", recount:" changed the cash-out for %", replenished:" replenished %", unreplenished:" un-marked %"};
   /* staff only see activity from their side of the pub, plus inventory counts */
   const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); ok.add("Tasks"); ok.add("Events"); return place=>ok.has(place); })();
   const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place==="Schedule" ? "Shifts" : (l.place||"")}));   // the Schedule tab is called Shifts now
@@ -2338,169 +2338,97 @@ function openDepositSetting(){
 }
 
 /* ---------- cash-out at close ----------
-   Managers set up the drawers and each one's starting bank. Card tips get pulled during the shift, so at close the
-   bartender counts what's left bill by bill and types in the cash sales and card tips from Toast. The app works out:
-     expected = bank + cash sales - card tips paid out - paid outs     over/short = counted - expected
-     then: leave the bank, drop the rest.
-   Managers get an alert when a drawer is off by more than the tolerance, and a history of every night. */
-const BILLS = [100,50,20,10,5,1];
+   Toast counts the drawer and prints a Closed Drawer Report. If its Expected deposit has a minus sign (like −$6.22),
+   the drawer is short by that much and a manager has to put it back. At close the bartender only says whether the
+   drawer is short, and by how much. Managers get an alert, a list of drawers to replenish, and a history. */
 const drawers = () => D().drawers || [];
 const cashouts = () => D().cashouts || [];
-const cashTol = () => { const v = (D().settings||{}).cash_tolerance; return v==null ? 5 : Number(v); };
 const cents = n => Math.round(Number(n||0)*100)/100;
 /* "$1,251.35", "$876" */
 const cash = n => { const v = Math.abs(cents(n)); return "$"+v.toLocaleString("en-US",{minimumFractionDigits: v%1 ? 2 : 0, maximumFractionDigits:2}); };
-function cashResult(diff){
-  const d = cents(diff);
-  if (Math.abs(d) < 0.005) return {text:"Balanced", short:"Balanced", cls:"ok", off:false};
-  const off = Math.abs(d) > cashTol();
-  return {text:cash(d)+(d < 0 ? " short" : " over"), short:(d < 0 ? "−" : "+")+cash(d), cls: off ? (d < 0 ? "danger" : "warn") : "ok", off};
-}
+const isShort = c => !!c && Number(c.short_amt) > 0;
+const needsRefill = c => isShort(c) && !c.replenished_at;
 const canCashOut = () => isAdmin() || (me().roles||[]).some(id=>(roleById(id)||{}).section==="foh");
 /* the Drawers tab: managers always (to set it up); front of house once there's a drawer */
 const showCashTab = () => !!me() && (isAdmin() || (canCashOut() && drawers().length > 0));
 const cashFor = (day, drawerId) => cashouts().find(c=>c.day===day && c.drawer_id===drawerId);
-const billsText = b => [...BILLS.filter(x=>b && b[x]).map(x=>b[x]+" × $"+x), b && b.coins ? "coins "+cash(b.coins) : null].filter(Boolean).join(" · ") || "Empty";
+const cashTag = c => isShort(c) ? h("span",{class:"tag "+(c.replenished_at ? "plain" : "danger"), text:"Short "+cash(c.short_amt)+(c.replenished_at ? " · replenished" : "")})
+                                : h("span",{class:"tag ok", text:"Not short"});
+const isLate = () => { const hr = new Date().getHours(); return hr >= 17 || hr < ROLL_HOUR; };
 
-/* the chalkboard line on the Tasks tab: from 5 PM for whoever can cash out; managers also hear about last night in the morning */
-function cashBoardRow(today, now){
-  const ds = drawers(); if (!ds.length || !canCashOut()) return null;
-  const hr = now.getHours(), late = hr >= 17 || hr < ROLL_HOUR;
-  const done = ds.map(d=>cashFor(today, d.id)).filter(Boolean), off = done.filter(c=>cashResult(c.diff).off);
+/* the chalkboard lines on the Tasks tab: tonight's cash-out from 5 PM (or once one's done), and for managers, drawers to replenish */
+function cashBoardRows(today){
+  const ds = drawers(), rows = []; if (!ds.length || !canCashOut()) return rows;
+  const done = ds.map(d=>cashFor(today, d.id)).filter(Boolean), short = done.filter(isShort);
   const open = () => go("cash");
-  if (late || done.length){
-    const v = off.length ? off.map(c=>c.drawer_name+" "+cashResult(c.diff).short).join(", ")
+  if (isLate() || done.length){
+    const v = short.length ? short.map(c=>c.drawer_name+" short "+cash(c.short_amt)).join(", ")
             : done.length===ds.length ? "Done ✓"
             : done.length ? done.length+" of "+ds.length+" done"
-            : ds.length===1 ? "Count the drawer" : ds.length+" drawers";
-    return boardRow("tn-cash", "Cash-out", v, open, off.length>0 || (late && hr < ROLL_HOUR && done.length < ds.length));
+            : ds.length===1 ? "Not done yet" : ds.length+" drawers";
+    rows.push(boardRow("tn-cash", "Cash-out", v, open, short.length>0 || (new Date().getHours() < ROLL_HOUR && done.length < ds.length)));
   }
-  if (isAdmin()){
-    const y = cashouts().filter(c=>c.day===addDays(today,-1) && cashResult(c.diff).off);
-    if (y.length) return boardRow("tn-cash", "Last night's cash", y.map(c=>c.drawer_name+" "+cashResult(c.diff).short).join(", "), open, true);
-  }
-  return null;
+  const owed = isAdmin() ? cashouts().filter(c=>needsRefill(c) && c.day!==today) : [];
+  if (owed.length) rows.push(boardRow("tn-cash", "Replenish", owed.length===1 ? owed[0].drawer_name+" "+cash(owed[0].short_amt) : owed.length+" drawers · "+cash(owed.reduce((s,c)=>s+Number(c.short_amt),0)), open, true));
+  return rows;
+}
+/* the tab's dot: in the evening until every drawer is done; for managers, while a drawer needs replenishing */
+function cashDot(){
+  const ds = drawers(); if (!S.data || !ds.length || !canCashOut()) return false;
+  const today = shiftDay();
+  return (isLate() && ds.some(d=>!cashFor(today, d.id))) || (isAdmin() && cashouts().some(needsRefill));
 }
 
-function openCashPicker(){
-  const ds = drawers(), today = shiftDay();
-  if (!ds.length) return toast("Ask a manager to set up the cash drawers first.");
-  if (ds.length===1) return openCashOut(ds[0]);
-  openSheet(
-    h("h2",{text:"Which drawer?"}),
-    h("div",{class:"stack", style:"gap:8px"}, ds.map(d=>{
-      const c = cashFor(today, d.id), r = c && cashResult(c.diff);
-      return h("button",{type:"button", class:"setrow", onclick:()=>openCashOut(d)},
-        h("span",{class:"t"}, h("b",{text:d.name}), h("span",{class:"hint", text: c ? "Counted by "+c.by_name+" · tap to count again" : cash(d.bank)+" bank"})),
-        c ? h("span",{class:"tag "+r.cls, text:r.text}) : null,
-        h("span",{class:"chev-r", "aria-hidden":"true", text:"›"}));
-    })),
-    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
-}
-
-/* the count: bill by bill, then Toast's numbers, then what to do with the cash */
+/* the cash-out: short or not, and how much */
 function openCashOut(dr, day){
   day = day || shiftDay();
-  const prev = cashFor(day, dr.id), b = (prev && prev.bills) || {};
-  const num = (id, val, extra) => h("input", Object.assign({type:"number", id, min:"0", value: val==null || val===0 ? "" : val, autocomplete:"off"}, extra||{}));
-  const billIn = {}, billSub = {};
-  const billRows = BILLS.map(x=>{
-    billIn[x] = num("cb"+x, b[x], {step:"1", inputmode:"numeric", placeholder:"0", "aria-label":"Number of $"+x+" bills"});
-    billSub[x] = h("span",{class:"bsub"});
-    return h("div",{class:"billrow"}, h("label",{for:"cb"+x, class:"bden", text:"$"+x}), h("span",{class:"bx", "aria-hidden":"true", text:"×"}), billIn[x], billSub[x]);
-  });
-  const coins = num("cbCoins", b.coins, {step:"0.01", inputmode:"decimal", placeholder:"0.00"});
-  const sales = num("cbSales", prev ? prev.cash_sales : null, {step:"0.01", inputmode:"decimal"});
-  const tips = num("cbTips", prev ? prev.card_tips : null, {step:"0.01", inputmode:"decimal", placeholder:"0.00"});
-  const bank = num("cbBank", prev ? prev.bank : dr.bank, {step:"1", inputmode:"decimal"});
-  const pouts = num("cbPouts", prev ? prev.paid_outs : null, {step:"0.01", inputmode:"decimal", placeholder:"0.00"});
-  const poutNote = h("input",{type:"text", id:"cbPoutNote", maxlength:"200", placeholder:"What for? (ice, the DJ…)", value:prev ? prev.paid_out_note : ""});
-  const note = h("textarea",{id:"cbNote", rows:"2", maxlength:"1000", placeholder:"Anything a manager should know"}, prev ? prev.note : "");
-  const total = h("b",{class:"ctotal"}), res = h("div",{class:"cashres", "aria-live":"polite"});
-  const val = el => { const v = parseFloat(el.value); return isNaN(v) ? 0 : v; };
-  const counted = () => cents(BILLS.reduce((s,x)=>s + Math.max(0, Math.floor(val(billIn[x])))*x, 0) + Math.max(0, val(coins)));
-  const sync = () => {
-    BILLS.forEach(x=>{ const n = Math.max(0, Math.floor(val(billIn[x]))); billSub[x].textContent = n ? cash(n*x) : ""; });
-    const c = counted(); total.textContent = cash(c);
-    if (sales.value.trim()===""){ res.replaceChildren(h("p",{class:"hint", style:"margin:0", text:"Enter the cash sales from Toast to see if the drawer balances."})); return; }
-    const exp = cents(val(bank) + val(sales) - val(tips) - val(pouts)), diff = cents(c - exp), r = cashResult(diff), drop = cents(c - val(bank));
-    res.replaceChildren(...[
-      h("div",{class:"row cr-top"}, h("span",{class:"hint", text:"Should be "+cash(exp)}), h("span",{class:"tag big "+r.cls, text:r.text})),
-      h("ol",{class:"cr-steps"},
-        h("li",{}, h("span",{text:"Leave the bank"}), h("b",{text:cash(val(bank))})),
-        h("li",{}, h("span",{text:"Drop in the safe"}), h("b",{text: drop < 0 ? "$0" : cash(drop)}))),
-      drop < 0 ? h("p",{class:"warnline", text:"There's less than the bank in the drawer ("+cash(drop)+" short of it). Leave a note for a manager."}) : null].filter(Boolean));
-  };
-  [...Object.values(billIn), coins, sales, tips, bank, pouts].forEach(el=>el.addEventListener("input", sync));
+  const prev = cashFor(day, dr.id);
+  let short = prev ? isShort(prev) : null;
+  const amt = h("input",{type:"number", id:"coAmount", min:"0.01", step:"0.01", inputmode:"decimal", placeholder:"0.00", value: isShort(prev) ? prev.short_amt : ""});
+  const amtBox = h("div",{class:"stack", style:"gap:6px"},
+    h("label",{class:"lbl", for:"coAmount"}, "How much is it short? ($)", amt),
+    h("p",{class:"hint", style:"margin:0", text:"The Expected deposit on the report, without the minus sign."}));
+  const note = h("textarea",{id:"coNote", rows:"2", maxlength:"1000", placeholder:"Anything a manager should know"}, prev ? prev.note : "");
   const err = h("p",{class:"loginerr", role:"alert"});
-  const morePouts = !!(prev && (prev.paid_outs > 0 || prev.paid_out_note));
+  const pick = (val, label, sub) => h("label",{class:"yn"}, h("input",{type:"radio", name:"coShort", value:String(val), checked:short===val, onchange:()=>{ short = val; amtBox.hidden = !val; err.textContent = ""; if (val) amt.focus(); }}),
+    h("span",{}, h("b",{text:label}), h("small",{text:sub})));
+  amtBox.hidden = !short;
   openSheet(
     h("h2",{text:"Cash out: "+dr.name}),
-    h("p",{class:"hint", style:"margin:-4px 0 0", text: (day!==shiftDay() ? "For "+longDay(day)+". " : "")+(prev ? "Counted by "+prev.by_name+" "+when(prev.at)+". Saving replaces it." : "Make sure everyone's pulled their card tips, then count what's left.")}),
-    h("section",{class:"cstep"}, h("h3",{text:"1. Count the drawer"}),
-      h("div",{class:"bills"}, billRows,
-        h("div",{class:"billrow"}, h("label",{for:"cbCoins", class:"bden", text:"Coins"}), h("span",{class:"bx", "aria-hidden":"true", text:"$"}), coins, h("span",{class:"bsub"}))),
-      h("div",{class:"row ctotalrow"}, h("span",{text:"Counted"}), total)),
-    h("section",{class:"cstep"}, h("h3",{text:"2. From Toast's report"}),
-      h("div",{class:"inline"}, h("label",{class:"lbl", for:"cbSales", style:"flex:1"}, "Cash sales ($)", sales), h("label",{class:"lbl", for:"cbTips", style:"flex:1"}, "Card tips paid out ($)", tips)),
-      h("p",{class:"hint", style:"margin:-4px 0 0", text:"All the card tips taken out of this drawer tonight, including yours."}),
-      h("div",{class:"inline"}, h("label",{class:"lbl", for:"cbBank", style:"flex:1"}, "Starting bank ($)", bank), h("span",{style:"flex:1"})),
-      h("details",{class:"pouts", open:morePouts}, h("summary",{text:"Paid out cash for something?"}),
-        h("div",{class:"inline"}, h("label",{class:"lbl", for:"cbPouts", style:"flex:1"}, "Paid out ($)", pouts), h("label",{class:"lbl", for:"cbPoutNote", style:"flex:2"}, "For", poutNote)))),
-    h("section",{class:"cstep"}, h("h3",{text:"3. Then"}), res),
-    h("label",{class:"lbl", for:"cbNote"}, "Note (optional)", note),
+    h("p",{class:"hint", style:"margin:-4px 0 0", text:(day!==shiftDay() ? "For "+longDay(day)+". " : "")+(prev ? "Entered by "+prev.by_name+" "+when(prev.at)+". Saving replaces it." : "Close the drawer in Toast and look at Expected deposit on the Closed Drawer Report. A minus sign (like −$6.22) means the drawer is short.")}),
+    h("fieldset",{class:"choices"}, h("legend",{class:"lbl", text:"Is the drawer short?"}),
+      h("div",{class:"ynpick"}, pick(false, "No", "Deposit is $0 or more"), pick(true, "Yes, it's short", "Deposit has a minus sign"))),
+    amtBox,
+    h("label",{class:"lbl", for:"coNote"}, "Note (optional)", note),
     err,
     h("button",{type:"button", class:"btn", onclick:async ev=>{
-      if (sales.value.trim()===""){ err.textContent = "Enter the cash sales from Toast."; sales.focus(); return; }
-      if (!counted()){ err.textContent = "Count the drawer first."; billIn[20].focus(); return; }
-      const data = {bills:{}, cash_sales:sales.value, card_tips:tips.value||0, paid_outs:pouts.value||0, paid_out_note:poutNote.value, bank:bank.value===""?null:bank.value, note:note.value};
-      BILLS.forEach(x=>{ const n = Math.max(0, Math.floor(val(billIn[x]))); if (n) data.bills[x] = n; });
-      if (val(coins) > 0) data.bills.coins = cents(val(coins));
+      if (short===null){ err.textContent = "Pick whether the drawer is short."; return; }
+      const v = Number(amt.value);
+      if (short && (!amt.value.trim() || isNaN(v) || v <= 0)){ err.textContent = "Enter how much it's short."; amt.focus(); return; }
       ev.target.disabled = true; err.textContent = "";
       try {
-        const c = await call("api_cash_out",{p_drawer_id:dr.id, p_data:data, p_day: day!==shiftDay() ? day : null});
-        const r = cashResult(c.diff);
-        play(r.off ? "ok" : "cheers"); await refresh(); openCashDone(c);
+        const c = await call("api_cash_out",{p_drawer_id:dr.id, p_data:{short, amount: short ? cents(v) : 0, note:note.value}, p_day: day!==shiftDay() ? day : null});
+        play(short ? "ok" : "cheers"); await refresh(); closeSheet();
+        toast(short ? dr.name+" short "+cash(c.short_amt)+". Managers have been told." : dr.name+" cashed out ✓");
       } catch(x){ if (x.code==="not_logged_in") return logOut("You've been logged out. Enter your number again."); err.textContent = errMsg(x); ev.target.disabled = false; }
-    }}, prev ? "Save the new count" : "Save cash-out"),
+    }}, "Save"),
     h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
-  sync();
-  if (!prev) billIn[100].focus();
 }
 
-/* right after saving: the result and what to do with the cash */
-function openCashDone(c){
-  const r = cashResult(c.diff), drop = cents(c.drop_amt);
-  openSheet(
-    h("div",{class:"cashdone "+r.cls},
-      h("span",{class:"hint", text:c.drawer_name+" drawer"}),
-      h("h2",{text: r.text==="Balanced" ? "Balanced ✓" : r.text}),
-      h("span",{class:"hint", text:"Counted "+cash(c.counted)+" · should be "+cash(c.expected)})),
-    r.off ? h("p",{class:"hint", style:"margin:0", text:"Managers have been told. Count it once more if you can; tap the drawer in the Drawers tab to fix the count."}) : null,
-    h("ol",{class:"cr-steps"},
-      h("li",{}, h("span",{text:"Leave the bank"}), h("b",{text:cash(c.bank)})),
-      h("li",{}, h("span",{text:"Drop in the safe"}), h("b",{text: drop < 0 ? "$0" : cash(drop)}))),
-    h("button",{type:"button", class:"btn", onclick:closeSheet},"Done"));
-}
-
-/* managers: one night's count */
+/* managers: one night */
 function openCashDetail(c){
-  const r = cashResult(c.diff), ck = "cash:"+c.id;
-  const fact = (l, v) => partyFact(l, v);
   openSheet(
-    h("div",{class:"line"}, h("span",{class:"tag "+r.cls, text:r.text})),
+    h("div",{class:"line"}, cashTag(c)),
     h("h2",{text:c.drawer_name+" · "+shortDay(c.day)}),
     h("div",{class:"pfacts"},
-      fact("Counted", cash(c.counted)),
-      fact("Should be", cash(c.expected)+" = "+cash(c.bank)+" bank + "+cash(c.cash_sales)+" cash sales"+(Number(c.card_tips) ? " − "+cash(c.card_tips)+" card tips" : "")+(Number(c.paid_outs) ? " − "+cash(c.paid_outs)+" paid out" : "")),
-      Number(c.paid_outs) ? fact("Paid out", cash(c.paid_outs)+(c.paid_out_note ? " · "+c.paid_out_note : "")) : null,
-      fact("Card tips", cash(c.card_tips)+" paid out"),
-      fact("Dropped", cash(Math.max(0, c.drop_amt))),
-      fact("Bills", billsText(c.bills)),
-      fact("Note", c.note)),
-    h("p",{class:"hint", style:"margin:0", text:"Counted by "+(c.by_name||"someone")+" "+when(c.at)+(c.edits ? " · counted "+(c.edits+1)+" times" : "")}),
+      partyFact("Short", isShort(c) ? cash(c.short_amt) : "No"),
+      isShort(c) ? partyFact("Replenished", c.replenished_at ? when(c.replenished_at)+" by "+(c.replenished_by_name||"a manager") : "Not yet") : null,
+      partyFact("Note", c.note)),
+    h("p",{class:"hint", style:"margin:0", text:"Entered by "+(c.by_name||"someone")+" "+when(c.at)+(c.edits ? " · changed "+c.edits+(c.edits===1?" time":" times") : "")}),
+    canWrite() && needsRefill(c) ? h("button",{type:"button", class:"btn", onclick:async()=>{ closeSheet(); await act("api_replenish",{p_id:c.id, p_done:true}, c.drawer_name+" replenished ✓"); }}, "Mark replenished") : null,
     canWrite() ? h("div",{class:"inline"},
-      h("button",{type:"button", class:"btn ghost small", onclick:()=>openCashOut({id:c.drawer_id, name:c.drawer_name, bank:c.bank}, c.day)},"Fix this count"),
+      h("button",{type:"button", class:"btn ghost small", onclick:()=>openCashOut({id:c.drawer_id, name:c.drawer_name}, c.day)},"Change it"),
+      c.replenished_at ? h("button",{type:"button", class:"btn ghost small", onclick:async()=>{ closeSheet(); await act("api_replenish",{p_id:c.id, p_done:false}, "Marked not replenished"); }},"Not replenished after all") : null,
       h("button",{type:"button", class:"linkbtn warn", onclick:ev=>{
         if (ev.target.dataset.armed){ closeSheet(); act("api_remove_cashout",{p_id:c.id}, "Cash-out deleted"); }
         else { ev.target.dataset.armed = "1"; ev.target.textContent = "Tap again to delete it"; } }},"Delete")) : null,
@@ -2508,47 +2436,31 @@ function openCashDetail(c){
 }
 
 function openDrawerForm(d){
-  const name = h("input",{type:"text", id:"drName", maxlength:"40", value:d ? d.name : "", placeholder:"Bar, Service bar…", autocomplete:"off"});
-  const bank = h("input",{type:"number", id:"drBank", min:"0", step:"1", inputmode:"decimal", value:d ? d.bank : ""});
+  const name = h("input",{type:"text", id:"drName", maxlength:"40", value:d ? d.name : "", placeholder:"Back Bar, Front Bar…", autocomplete:"off"});
   const err = h("p",{class:"loginerr", role:"alert"});
   openSheet(
-    h("h2",{text:d ? "Edit drawer" : "Add a drawer"}),
+    h("h2",{text:d ? "Rename drawer" : "Add a drawer"}),
     h("label",{class:"lbl", for:"drName"}, "Name", name),
-    h("label",{class:"lbl", for:"drBank"}, "Starting bank ($)", bank),
-    h("p",{class:"hint", style:"margin:0", text:"The cash the drawer starts each night with. The bartender can change it for one night if it was different."}),
+    h("p",{class:"hint", style:"margin:0", text:"Use the name on Toast's report, like “Back Bar”, so it's easy to match."}),
     err,
     h("button",{type:"button", class:"btn", onclick:async ev=>{
       if (!name.value.trim()){ err.textContent = "Give the drawer a name."; name.focus(); return; }
-      if (bank.value==="" || isNaN(Number(bank.value)) || Number(bank.value) < 0){ err.textContent = "Enter the starting bank."; bank.focus(); return; }
       ev.target.disabled = true;
-      if (await act("api_save_drawer",{p_id:d ? d.id : null, p_name:name.value.trim(), p_bank:Number(bank.value)}, d ? "Drawer saved" : name.value.trim()+" drawer added")) closeSheet();
+      if (await act("api_save_drawer",{p_id:d ? d.id : null, p_name:name.value.trim(), p_bank:Number(d ? d.bank : 0) || 0}, d ? "Drawer renamed" : name.value.trim()+" drawer added")) closeSheet();
       else ev.target.disabled = false;
     }}, d ? "Save" : "Add drawer"),
     d ? h("button",{type:"button", class:"linkbtn warn", style:"align-self:center", onclick:ev=>{
       if (ev.target.dataset.armed){ closeSheet(); act("api_remove_drawer",{p_id:d.id}, d.name+" drawer removed"); }
-      else { ev.target.dataset.armed = "1"; ev.target.textContent = "Tap again to remove it (past counts stay)"; } }},"Remove this drawer") : null,
+      else { ev.target.dataset.armed = "1"; ev.target.textContent = "Tap again to remove it (past nights stay)"; } }},"Remove this drawer") : null,
     h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
   name.focus();
-}
-function openCashTolSetting(){
-  const v = h("input",{type:"number", id:"setTol", min:"0", step:"1", inputmode:"decimal", value:cashTol()});
-  openSheet(
-    h("h2",{text:"When to flag a drawer"}),
-    h("p",{class:"hint", style:"margin:0", text:"A drawer that's off by more than this shows in red, and managers with alerts on get a notification. Smaller differences count as balanced."}),
-    h("label",{class:"lbl", for:"setTol"}, "Off by more than ($)", v),
-    h("button",{type:"button", class:"btn", onclick:async ev=>{
-      const s = v.value.trim(); if (s==="" || isNaN(Number(s)) || Number(s) < 0){ v.focus(); return; }
-      ev.target.disabled = true;
-      if (await act("api_set_setting",{p_name:"cash_tolerance", p_value:Number(s)}, "Flagging drawers off by more than "+cash(s))) closeSheet(); else ev.target.disabled = false;
-    }}, "Save"),
-    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
-  v.focus();
 }
 
 function cashCsv(list){
   const q = v => { const s = String(v==null ? "" : v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
-  const rows = [["Date","Drawer","Counted by","Starting bank","Cash sales","Card tips paid out","Paid outs","Paid out for","Counted","Should be","Over/short","Dropped","Note"]];
-  list.slice().sort((a,b)=>a.day.localeCompare(b.day)||a.drawer_name.localeCompare(b.drawer_name)).forEach(c=>rows.push([c.day, c.drawer_name, c.by_name, c.bank, c.cash_sales, c.card_tips, c.paid_outs, c.paid_out_note, c.counted, c.expected, c.diff, Math.max(0, c.drop_amt), c.note]));
+  const rows = [["Date","Drawer","Entered by","Short","Amount short","Replenished","Replenished by","Note"]];
+  list.slice().sort((a,b)=>a.day.localeCompare(b.day)||a.drawer_name.localeCompare(b.drawer_name)).forEach(c=>rows.push([c.day, c.drawer_name, c.by_name,
+    isShort(c) ? "Yes" : "No", isShort(c) ? c.short_amt : 0, c.replenished_at ? localDay(c.replenished_at) : "", c.replenished_by_name || "", c.note]));
   return rows.map(r=>r.map(q).join(",")).join("\n");
 }
 async function downloadCash(list){
@@ -2558,17 +2470,10 @@ async function downloadCash(list){
   const a = h("a",{href:URL.createObjectURL(file), download:name}); document.body.append(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
-/* the tab gets a dot in the evening until every drawer is counted, or when tonight's count is off */
-function cashDot(){
-  const ds = drawers(); if (!S.data || !ds.length || !canCashOut()) return false;
-  const today = shiftDay(), hr = new Date().getHours(), done = ds.map(d=>cashFor(today, d.id));
-  return done.some(c=>c && cashResult(c.diff).off) || ((hr >= 17 || hr < ROLL_HOUR) && done.some(c=>!c));
-}
 function cashRow(c, onclick){
-  const r = cashResult(c.diff);
   return h("button",{type:"button", class:"cashrow", onclick: onclick || (()=>openCashDetail(c))},
-    h("span",{class:"t"}, h("b",{text:c.drawer_name}), h("span",{class:"hint", text:(c.by_name||"")+" · counted "+cash(c.counted)+" · dropped "+cash(Math.max(0, c.drop_amt))})),
-    h("span",{class:"tag "+r.cls, text:r.text}));
+    h("span",{class:"t"}, h("b",{text:c.drawer_name}), h("span",{class:"hint", text:(c.by_name||"")+(c.note ? " · “"+c.note+"”" : "")})),
+    cashTag(c));
 }
 function viewCash(){
   if (!showCashTab()){ S.view = "overview"; return viewOverview(); }
@@ -2576,52 +2481,54 @@ function viewCash(){
   out.push(h("div",{class:"sec-head"}, h("h2",{class:"sectitle", text:"Drawers"})));
   if (!ds.length){
     out.push(admin
-      ? emptyCard("Set up your drawers", "Add each cash drawer that gets counted at close, with the bank it starts the night with. Then whoever closes can count it here.",
+      ? emptyCard("Set up your drawers", "Add each cash drawer that gets closed out at night, using the name on Toast's report. Then whoever closes says here whether it came up short.",
           canWrite() ? h("button",{type:"button", class:"btn", onclick:()=>openDrawerForm(null)},"Add a drawer") : null)
-      : emptyCard("No drawers yet", "Once a manager sets up the cash drawers, you'll count them here at close."));
+      : emptyCard("No drawers yet", "Once a manager sets up the cash drawers, you'll cash them out here at close."));
     return out;
   }
   /* tonight */
-  const hr = new Date().getHours(), late = hr >= 17 || hr < ROLL_HOUR;
   out.push(h("section",{class:"card stack cashtonight"},
     h("div",{class:"row"}, h("h3",{text:"Tonight"}), h("span",{class:"hint", text:shortDay(today)})),
     ds.map(d=>{ const c = cashFor(today, d.id);
       if (c) return admin ? cashRow(c) : cashRow(c, ()=>openCashOut(d));
-      return h("div",{class:"cashrow todo"}, h("span",{class:"t"}, h("b",{text:d.name}), h("span",{class:"hint", text:"Not counted yet · "+cash(d.bank)+" bank"})),
-        canWrite() ? h("button",{type:"button", class:"btn small"+(late ? "" : " ghost"), onclick:()=>openCashOut(d)},"Count") : null); }),
-    h("p",{class:"hint", style:"margin:0", text: admin ? "Tap a count to see the breakdown or fix it." : "Count each drawer at close, once the card tips are pulled. Tap a count to redo it."})));
+      return h("div",{class:"cashrow todo"}, h("span",{class:"t"}, h("b",{text:d.name}), h("span",{class:"hint", text:"Not done yet"})),
+        canWrite() ? h("button",{type:"button", class:"btn small"+(isLate() ? "" : " ghost"), onclick:()=>openCashOut(d)},"Cash out") : null); }),
+    h("p",{class:"hint", style:"margin:0", text: admin ? "Tap one to see it, change it, or mark it replenished." : "After you close the drawer in Toast, check the Expected deposit on the report and enter it here. Tap one to change it."})));
   if (!admin) return out;
+  /* drawers waiting on a manager */
+  const owed = cashouts().filter(needsRefill).sort((a,b)=>a.day.localeCompare(b.day));
+  if (owed.length) out.push(h("section",{class:"card stack refill"},
+    h("div",{class:"row"}, h("h3",{text:"Needs replenishing"}), h("span",{class:"tag danger", text:cash(owed.reduce((s,c)=>s+Number(c.short_amt),0))})),
+    owed.map(c=>h("div",{class:"cashrow"},
+      h("button",{type:"button", class:"t linkish", onclick:()=>openCashDetail(c)}, h("b",{text:c.drawer_name+" · "+cash(c.short_amt)}), h("span",{class:"hint", text:shortDay(c.day)+" · "+(c.by_name||"")})),
+      canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>act("api_replenish",{p_id:c.id, p_done:true}, c.drawer_name+" replenished ✓")},"Replenished") : null))));
   /* history */
   const range = S.cashRange || 30, from = addDays(today, -range);
   const list = cashouts().filter(c=>c.day < today && c.day >= from);
-  const net = cents(list.reduce((s,c)=>s + Number(c.diff), 0)), off = list.filter(c=>cashResult(c.diff).off);
-  const dropped = list.reduce((s,c)=>s + Math.max(0, Number(c.drop_amt)), 0), tips = list.reduce((s,c)=>s + Number(c.card_tips), 0);
+  const shorts = list.filter(isShort), total = shorts.reduce((s,c)=>s + Number(c.short_amt), 0);
   const sec = h("section",{class:"stack"},
     h("div",{class:"sec-head", style:"margin:0"}, h("h2",{text:"History"}),
       list.length ? h("button",{type:"button", class:"btn ghost small", onclick:()=>downloadCash(list)},"Download CSV") : null),
     h("div",{class:"chips", role:"group", "aria-label":"Time range"},
       [[7,"Last 7 days"],[30,"30 days"],[90,"90 days"]].map(([n,label])=>h("button",{type:"button", class:"chip", "aria-pressed":String(range===n), onclick:()=>{ S.cashRange = n; render(); }}, label))));
-  if (!list.length) sec.append(h("p",{class:"hint", text:"No cash-outs before tonight in this range yet."}));
+  if (!list.length) sec.append(h("p",{class:"hint", text:"Nothing before tonight in this range yet."}));
   else {
-    const nr = cashResult(net);
-    sec.append(h("div",{class:"cashstats"},
-      h("div",{class:"cstat "+(Math.abs(net) < 0.005 ? "" : net < 0 ? "neg" : "pos")}, h("small",{text:"Over / short"}), h("b",{text: Math.abs(net) < 0.005 ? "$0" : nr.short})),
-      h("div",{class:"cstat"+(off.length ? " neg" : "")}, h("small",{text:"Flagged"}), h("b",{text:String(off.length)}), h("small",{text:"of "+list.length+" counts"})),
-      h("div",{class:"cstat"}, h("small",{text:"Dropped"}), h("b",{text:cash(dropped)}), h("small",{text:cash(tips)+" card tips"}))));
+    sec.append(h("div",{class:"cashstats two"},
+      h("div",{class:"cstat"+(shorts.length ? " neg" : "")}, h("small",{text:"Nights short"}), h("b",{text:String(shorts.length)}), h("small",{text:"of "+list.length+" cash-outs"})),
+      h("div",{class:"cstat"+(total ? " neg" : "")}, h("small",{text:"Total short"}), h("b",{text:cash(total)}), h("small",{text: shorts.length ? "about "+cash(total/shorts.length)+" a time" : "Nothing to put back"}))));
     const days = [...new Set(list.map(c=>c.day))].sort().reverse();
     sec.append(h("div",{class:"stack cashdays"}, days.map(day=>h("div",{class:"cashday"},
       h("div",{class:"divider", text:shortDay(day)}),
       list.filter(c=>c.day===day).sort((a,b)=>a.drawer_name.localeCompare(b.drawer_name)).map(c=>cashRow(c)),
-      ds.filter(d=>!list.some(c=>c.day===day && c.drawer_id===d.id)).map(d=>h("div",{class:"cashrow todo"}, h("span",{class:"t"}, h("b",{text:d.name}), h("span",{class:"hint", text:"No count"})),
+      ds.filter(d=>!list.some(c=>c.day===day && c.drawer_id===d.id)).map(d=>h("div",{class:"cashrow todo"}, h("span",{class:"t"}, h("b",{text:d.name}), h("span",{class:"hint", text:"Nothing entered"})),
         canWrite() ? h("button",{type:"button", class:"btn ghost small", onclick:()=>openCashOut(d, day)},"Add") : null))))));
   }
   out.push(sec);
   /* setup */
   out.push(h("section",{class:"stack"},
     h("h3",{class:"sethead", text:"Setup"}),
-    ds.map(d=>setRow(d.name, "Starting bank", cash(d.bank), ()=>openDrawerForm(d))),
-    canWrite() ? h("button",{type:"button", class:"btn ghost small", style:"align-self:flex-start", onclick:()=>openDrawerForm(null)},"+ Add a drawer") : null,
-    setRow("Flag a drawer", "When it's off by more than this, managers get an alert", cash(cashTol()), openCashTolSetting)));
+    ds.map(d=>setRow(d.name, "Tap to rename or remove", "", ()=>openDrawerForm(d))),
+    canWrite() ? h("button",{type:"button", class:"btn ghost small", style:"align-self:flex-start", onclick:()=>openDrawerForm(null)},"+ Add a drawer") : null));
   return out;
 }
 

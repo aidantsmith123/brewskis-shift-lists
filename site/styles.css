@@ -904,3 +904,20 @@ h2.sectitle{font-size:24px}
 .cstat.neg b{color:var(--danger)} .cstat.pos b{color:var(--done)}
 .cashday{display:flex;flex-direction:column;gap:6px}
 .cashday .divider{border-radius:8px}
+
+/* v38: cash-out is just "short or not" */
+.ynpick{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.yn{position:relative;display:block;cursor:pointer}
+.yn input{position:absolute;opacity:0;pointer-events:none}
+.yn>span{display:flex;flex-direction:column;gap:3px;height:100%;padding:14px 12px;border:1.5px solid var(--line);border-radius:14px;background:var(--card);text-align:center;align-items:center;justify-content:center}
+.yn b{font-size:17px}
+.yn small{color:var(--muted);font-size:12.5px}
+.yn input:checked + span{border-color:var(--blue);background:var(--soft);box-shadow:inset 0 0 0 1px var(--blue)}
+.yn input[value="true"]:checked + span{border-color:var(--danger);background:var(--danger-soft);box-shadow:inset 0 0 0 1px var(--danger)}
+.yn input[value="true"]:checked + span b{color:var(--danger)}
+.yn input:focus-visible + span{outline:2px solid var(--blue);outline-offset:2px}
+.refill{gap:8px;border-color:var(--danger)}
+.refill>.row h3{margin:0;font-family:var(--serif);font-size:20px}
+.refill .cashrow{background:var(--paper)}
+.linkish{border:0;background:none;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer}
+.cashstats.two{grid-template-columns:repeat(2,1fr)}

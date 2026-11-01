@@ -748,7 +748,7 @@ declare tz text := 'America/New_York'; lnow timestamp := p_now at time zone tz; 
         r record; ov_title text[]; ov_body text[]; os_title text[]; os_body text[];
         total int; done_n int; missed text[]; n_over int; n_out int; body text; st time; due_now boolean;
         endpoint_key text; quiet boolean; sw text[]; cv text[]; mgr boolean; nt text[]; nt_star boolean; nt_party int;
-        cs text[]; n_short int; tol numeric := _cash_tolerance(); cash_line text;
+        cs text[]; n_short int; cash_line text;
 begin
   delete from push_sent where sent_at < p_now - interval '45 days';
   -- everyone who turned notifications on gets coverage alerts; the rest is for managers
@@ -924,26 +924,26 @@ begin
       end if;
     end if;
 
-    -- 8. a cash-out that's off by more than the tolerance (counting again sends a new alert if it's still off)
+    -- 8. a drawer that came up short (changing it sends a new alert if it's still short)
     if mgr and (p->>'cash')::boolean and not quiet then
       cs := '{}'; n_short := 0;
-      for r in select c.id, c.drawer_name, c.diff, c.by_name, c.at, c.note from cashouts c
-                where c.at > p_now - interval '24 hours' and c.at > sub.created_at - interval '1 hour' and abs(c.diff) > tol
+      for r in select c.id, c.drawer_name, c.short_amt, c.by_name, c.at, c.note from cashouts c
+                where c.at > p_now - interval '24 hours' and c.at > sub.created_at - interval '1 hour' and c.short_amt > 0
                   and c.by_id is distinct from sub.staff_id
                 order by c.at loop
         k := 'cash:' || endpoint_key || ':' || r.id || ':' || extract(epoch from r.at)::bigint;
         insert into push_sent(key) values (k) on conflict do nothing; get diagnostics rc = row_count;
         continue when rc = 0;
-        if r.diff < 0 then n_short := n_short + 1; end if;
-        cs := cs || (r.drawer_name || ' drawer ' || _cash_result(r.diff) || ' · ' || coalesce(r.by_name, 'someone') ||
+        n_short := n_short + 1;
+        cs := cs || (r.drawer_name || ' drawer short ' || _money(r.short_amt) || ' · ' || coalesce(r.by_name, 'someone') ||
                      case when r.note <> '' then '. “' || left(r.note, 80) || '”' else '' end);
       end loop;
       if array_length(cs, 1) = 1 then
         out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
-          'title', case when n_short > 0 then 'Drawer came up short' else 'Drawer came up over' end, 'body', cs[1], 'url', './#cash', 'tag', 'cash');
+          'title', 'Drawer short', 'body', cs[1], 'url', './#cash', 'tag', 'cash');
       elsif array_length(cs, 1) > 1 then
         out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
-          'title', array_length(cs, 1) || ' drawers off', 'body', array_to_string(cs, '. '), 'url', './#cash', 'tag', 'cash');
+          'title', array_length(cs, 1) || ' drawers short', 'body', array_to_string(cs, '. '), 'url', './#cash', 'tag', 'cash');
       end if;
     end if;
 
@@ -969,10 +969,10 @@ begin
                   or (tk.repeat = 'once' and not tk.done))
              and tk.due_date is not null and _deadline(tk.due_date, tk.due_time) < p_now;
           select count(*) into n_out from counts c join items i on i.id = c.item_id where c.on_hand <= 0 and coalesce(i.par, 0) > 0;
-          -- cash: anything off, else all balanced (only once there are drawers)
+          -- cash: any drawer short (only once there are drawers)
           select case when count(*) = 0 then null
-                      when count(*) filter (where abs(diff) > tol) = 0 then 'Cash balanced.'
-                      else 'Cash: ' || string_agg(drawer_name || ' ' || _cash_result(diff), ', ' order by drawer_name) filter (where abs(diff) > tol) || '.' end
+                      when count(*) filter (where short_amt > 0) = 0 then 'No drawers short.'
+                      else 'Drawer short: ' || string_agg(drawer_name || ' ' || _money(short_amt), ', ' order by drawer_name) filter (where short_amt > 0) || '.' end
             into cash_line from cashouts where day = covered;
           if cash_line is null and exists (select 1 from drawers where active) then cash_line := 'No cash-out entered.'; end if;
           total := done_n + n_over + n_out + case when cash_line is null then 0 else 1 end;
@@ -1875,6 +1875,9 @@ begin
 end $$;
 
 -- ---------- cash-out at close (added Nov 2026) ----------
+-- v38: Toast counts the drawer and prints a Closed Drawer Report. If its Expected deposit is negative, the drawer is
+-- short by that much and a manager puts it back. The bartender just records whether it's short and the amount
+-- (short_amt); managers mark it replenished. The bill-count columns below are from the first version and go unused.
 -- Managers set up the cash drawers and each one's starting bank. Card tips get pulled from the drawer during the
 -- shift, so at close a bartender counts what's left bill by bill and types in the cash sales and card tips from Toast:
 --   expected = bank + cash sales - card tips paid out - paid outs      over/short = counted - expected
@@ -1912,6 +1915,9 @@ create table if not exists cashouts (
   unique (day, drawer_id)
 );
 create index if not exists cashouts_day_idx on cashouts (day desc);
+alter table cashouts add column if not exists short_amt numeric not null default 0;   -- 0 = not short
+alter table cashouts add column if not exists replenished_at timestamptz;
+alter table cashouts add column if not exists replenished_by_name text;
 -- v37: card tips come out during the shift. Counts saved before that change are refigured the new way.
 do $$
 begin
@@ -1956,11 +1962,11 @@ begin
   if exists (select 1 from drawers where active and lower(name) = lower(n) and id is distinct from p_id) then raise exception 'name_taken'; end if;
   if nullif(p_id,'') is null then
     insert into drawers (name, bank, sort) values (n, round(p_bank, 2), coalesce((select max(sort) + 1 from drawers), 0)) returning id into id_;
-    perform _log(me, 'added', 'the ' || n || ' drawer (' || _money(p_bank) || ' bank)', 'Cash');
+    perform _log(me, 'added', 'the ' || n || ' drawer', 'Cash');
   else
     update drawers set name = n, bank = round(p_bank, 2) where id = p_id and active returning id into id_;
     if id_ is null then raise exception 'not_found'; end if;
-    perform _log(me, 'edited', 'the ' || n || ' drawer (' || _money(p_bank) || ' bank)', 'Cash');
+    perform _log(me, 'edited', 'the ' || n || ' drawer', 'Cash');
   end if;
   return id_;
 end $$;
@@ -1973,14 +1979,12 @@ begin
   if found then perform _log(me, 'removed', 'the ' || d.name || ' drawer', 'Cash'); end if;
 end $$;
 
--- Save a drawer's cash-out for tonight (front of house and managers). Counting the same drawer again the same shift day
--- replaces it. Managers can pass p_day to fix an earlier night. Returns the saved cash-out.
--- p_data: bills {"100":n,"50":n,"20":n,"10":n,"5":n,"1":n,"coins":dollars}, cash_sales, card_tips, paid_outs, paid_out_note, bank, note
+-- Save a drawer's cash-out for tonight (front of house and managers): p_data = {"short": true|false, "amount": 6.22, "note": ""}.
+-- Entering the same drawer again the same shift day replaces it. Managers can pass p_day to fix an earlier night.
 create or replace function api_cash_out(p_token uuid, p_drawer_id text, p_data jsonb, p_day date default null) returns json language plpgsql
 set search_path = public, extensions as $$
 declare me staff := _me(p_token); mgr boolean := _is_manager(me.roles); dr drawers; d date := _shift_day(); c cashouts; old cashouts;
-        b jsonb := coalesce(p_data->'bills', '{}'); den text; n numeric; bills jsonb := '{}'; counted numeric := 0;
-        sales numeric; tips numeric; pouts numeric; bank numeric; expected numeric;
+        is_short boolean; amt numeric := 0;
 begin
   if not mgr and not exists (select 1 from roles r where r.id = any(me.roles) and r.section = 'foh') then raise exception 'foh_only'; end if;
   if p_day is not null and p_day <> d then
@@ -1990,43 +1994,40 @@ begin
   end if;
   select * into dr from drawers where id = p_drawer_id;
   if not found or (not dr.active and not exists (select 1 from cashouts where drawer_id = dr.id and day = d)) then raise exception 'not_found'; end if;
-  if jsonb_typeof(b) <> 'object' then raise exception 'bad_amount'; end if;
-  foreach den in array array['100','50','20','10','5','2','1'] loop
-    begin n := nullif(b->>den, '')::numeric; exception when others then raise exception 'bad_amount'; end;
-    continue when n is null or n = 0;
-    if n < 0 or n > 5000 or n <> trunc(n) then raise exception 'bad_amount'; end if;
-    bills := bills || jsonb_build_object(den, n::int);
-    counted := counted + n * den::int;
-  end loop;
-  begin n := nullif(b->>'coins', '')::numeric; exception when others then raise exception 'bad_amount'; end;
-  if n is not null and n <> 0 then
-    if n < 0 or n > 10000 then raise exception 'bad_amount'; end if;
-    bills := bills || jsonb_build_object('coins', round(n, 2));
-    counted := counted + round(n, 2);
+  if jsonb_typeof(p_data->'short') is distinct from 'boolean' then raise exception 'bad_amount'; end if;
+  is_short := (p_data->>'short')::boolean;
+  if is_short then
+    begin amt := round(nullif(trim(coalesce(p_data->>'amount','')), '')::numeric, 2); exception when others then raise exception 'bad_amount'; end;
+    if amt is null or amt <= 0 then raise exception 'need_amount'; end if;
+    if amt > 100000 then raise exception 'bad_amount'; end if;
   end if;
-  begin
-    sales := round(nullif(p_data->>'cash_sales', '')::numeric, 2);
-    tips  := round(coalesce(nullif(p_data->>'card_tips', '')::numeric, 0), 2);
-    pouts := round(coalesce(nullif(p_data->>'paid_outs', '')::numeric, 0), 2);
-    bank  := round(coalesce(nullif(p_data->>'bank', '')::numeric, dr.bank), 2);
-  exception when others then raise exception 'bad_amount'; end;
-  if sales is null then raise exception 'need_sales'; end if;
-  if sales < 0 or sales > 1000000 or tips < 0 or tips > 1000000 or pouts < 0 or pouts > 1000000 or bank < 0 or bank > 100000 then raise exception 'bad_amount'; end if;
-  expected := bank + sales - tips - pouts;
   select * into old from cashouts where day = d and drawer_id = dr.id for update;
-  insert into cashouts (day, drawer_id, drawer_name, bank, cash_sales, card_tips, paid_outs, paid_out_note, bills, counted, expected, diff, drop_amt, note, by_id, by_name)
-  values (d, dr.id, dr.name, bank, sales, tips, pouts, left(trim(coalesce(p_data->>'paid_out_note','')), 200), bills, counted, expected,
-          counted - expected, counted - bank, left(trim(coalesce(p_data->>'note','')), 1000), me.id, me.name)
-  on conflict (day, drawer_id) do update set drawer_name = excluded.drawer_name, bank = excluded.bank, cash_sales = excluded.cash_sales,
-     card_tips = excluded.card_tips, paid_outs = excluded.paid_outs, paid_out_note = excluded.paid_out_note, bills = excluded.bills,
-     counted = excluded.counted, expected = excluded.expected, diff = excluded.diff, drop_amt = excluded.drop_amt, note = excluded.note,
-     by_id = excluded.by_id, by_name = excluded.by_name, at = now(), edits = cashouts.edits + 1
+  insert into cashouts (day, drawer_id, drawer_name, short_amt, diff, note, by_id, by_name)
+  values (d, dr.id, dr.name, amt, -amt, left(trim(coalesce(p_data->>'note','')), 1000), me.id, me.name)
+  on conflict (day, drawer_id) do update set drawer_name = excluded.drawer_name, short_amt = excluded.short_amt, diff = excluded.diff,
+     note = excluded.note, by_id = excluded.by_id, by_name = excluded.by_name, at = now(), edits = cashouts.edits + 1,
+     replenished_at = case when excluded.short_amt = cashouts.short_amt then cashouts.replenished_at end,
+     replenished_by_name = case when excluded.short_amt = cashouts.short_amt then cashouts.replenished_by_name end
   returning * into c;
   insert into log (day, who, who_name, kind, text, place)
   values (_shift_day(), me.id, me.name, case when old.id is null then 'cashout' else 'recount' end,
-          'the ' || c.drawer_name || ' drawer' || case when d <> _shift_day() then ' for ' || to_char(d, 'Dy Mon FMDD') else '' end || ': ' || _cash_result(c.diff), 'Cash');
-  if abs(c.diff) > _cash_tolerance() then perform _push_kick(); end if;
+          'the ' || c.drawer_name || ' drawer' || case when d <> _shift_day() then ' for ' || to_char(d, 'Dy Mon FMDD') else '' end || ': ' ||
+          case when amt > 0 then 'short ' || _money(amt) else 'not short' end, 'Cash');
+  if amt > 0 then perform _push_kick(); end if;
   return row_to_json(c);
+end $$;
+
+-- A manager put the missing cash back (p_done false undoes it).
+create or replace function api_replenish(p_token uuid, p_id text, p_done boolean default true) returns void language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _mgr(p_token); c cashouts;
+begin
+  update cashouts set replenished_at = case when p_done then now() end, replenished_by_name = case when p_done then me.name end
+   where id = p_id and short_amt > 0 and (replenished_at is null) = coalesce(p_done, true) returning * into c;
+  if found then
+    perform _log(me, case when p_done then 'replenished' else 'unreplenished' end,
+                 'the ' || c.drawer_name || ' drawer for ' || to_char(c.day, 'Dy Mon FMDD') || ' (' || _money(c.short_amt) || ')', 'Cash');
+  end if;
 end $$;
 
 -- A cash-out entered by mistake (managers).

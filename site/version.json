@@ -1,5 +1,5 @@
 {
-  "version": 37,
+  "version": 38,
   "date": "2026-11-01",
-  "notes": "Cash-out now counts card tips as already pulled during the shift: count what's left at close, and the app subtracts the tips from what the drawer should hold."
+  "notes": "Simpler cash-out: after closing the drawer in Toast, the bartender just says whether it's short and by how much. Managers see what needs replenishing and mark it done."
 }
