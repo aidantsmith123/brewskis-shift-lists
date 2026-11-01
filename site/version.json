@@ -1,5 +1,5 @@
 {
-  "version": 35,
+  "version": 36,
   "date": "2026-11-01",
-  "notes": "Cash-out at close: count each drawer bill by bill, enter Toast's cash sales and card tips, and see right away if it's over or short. Managers get an alert and a history of every night."
+  "notes": "Drawers tab: count tonight's drawers, see each one's result, and (managers) the history and drawer setup, all in one place."
 }

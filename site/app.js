@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 35;
+const APP_VERSION = 36;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -581,7 +581,6 @@ function viewSettings(){
   if (admin) out.push(h("section",{class:"stack"},
     h("h3",{class:"sethead", text:"Managers"}),
     setRow("Team, roles & login numbers", "Add people, change roles, set login numbers", "", ()=>{ go("team"); loadVersions(); }),
-    setRow("Cash-outs", "Every night's drawer counts, and your drawers", drawers().length ? (drawers().length===1 ? "1 drawer" : drawers().length+" drawers") : "Set up", ()=>openCashView("settings")),
     setRow("Party deposit", "The usual amount to lock in a party date", depositSetting()!=null ? money(depositSetting()) : "Not set", openDepositSetting)));
 
   out.push(h("section",{class:"stack"},
@@ -2358,6 +2357,8 @@ function cashResult(diff){
   return {text:cash(d)+(d < 0 ? " short" : " over"), short:(d < 0 ? "−" : "+")+cash(d), cls: off ? (d < 0 ? "danger" : "warn") : "ok", off};
 }
 const canCashOut = () => isAdmin() || (me().roles||[]).some(id=>(roleById(id)||{}).section==="foh");
+/* the Drawers tab: managers always (to set it up); front of house once there's a drawer */
+const showCashTab = () => !!me() && (isAdmin() || (canCashOut() && drawers().length > 0));
 const cashFor = (day, drawerId) => cashouts().find(c=>c.day===day && c.drawer_id===drawerId);
 const billsText = b => [...BILLS.filter(x=>b && b[x]).map(x=>b[x]+" × $"+x), b && b.coins ? "coins "+cash(b.coins) : null].filter(Boolean).join(" · ") || "Empty";
 
@@ -2366,7 +2367,7 @@ function cashBoardRow(today, now){
   const ds = drawers(); if (!ds.length || !canCashOut()) return null;
   const hr = now.getHours(), late = hr >= 17 || hr < ROLL_HOUR;
   const done = ds.map(d=>cashFor(today, d.id)).filter(Boolean), off = done.filter(c=>cashResult(c.diff).off);
-  const open = () => isAdmin() ? openCashView() : openCashPicker();
+  const open = () => go("cash");
   if (late || done.length){
     const v = off.length ? off.map(c=>c.drawer_name+" "+cashResult(c.diff).short).join(", ")
             : done.length===ds.length ? "Done ✓"
@@ -2475,7 +2476,7 @@ function openCashDone(c){
       h("span",{class:"hint", text:c.drawer_name+" drawer"}),
       h("h2",{text: r.text==="Balanced" ? "Balanced ✓" : r.text}),
       h("span",{class:"hint", text:"Counted "+cash(c.counted)+" · should be "+cash(c.expected)})),
-    r.off ? h("p",{class:"hint", style:"margin:0", text:"Managers have been told. Count it once more if you can; tap the drawer on the board to fix the count."}) : null,
+    r.off ? h("p",{class:"hint", style:"margin:0", text:"Managers have been told. Count it once more if you can; tap the drawer in the Drawers tab to fix the count."}) : null,
     h("ol",{class:"cr-steps"},
       Number(c.card_tips) > 0 ? h("li",{}, h("span",{text:"Pay out card tips"}), h("b",{text:cash(c.card_tips)})) : null,
       h("li",{}, h("span",{text:"Leave the bank"}), h("b",{text:cash(c.bank)})),
@@ -2558,30 +2559,39 @@ async function downloadCash(list){
   const a = h("a",{href:URL.createObjectURL(file), download:name}); document.body.append(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
-function openCashView(back){ S.cashBack = back || (["cash","settings"].includes(S.view) ? (S.cashBack || "settings") : S.view); go("cash"); }
-function cashRow(c){
+/* the tab gets a dot in the evening until every drawer is counted, or when tonight's count is off */
+function cashDot(){
+  const ds = drawers(); if (!S.data || !ds.length || !canCashOut()) return false;
+  const today = shiftDay(), hr = new Date().getHours(), done = ds.map(d=>cashFor(today, d.id));
+  return done.some(c=>c && cashResult(c.diff).off) || ((hr >= 17 || hr < ROLL_HOUR) && done.some(c=>!c));
+}
+function cashRow(c, onclick){
   const r = cashResult(c.diff);
-  return h("button",{type:"button", class:"cashrow", onclick:()=>openCashDetail(c)},
+  return h("button",{type:"button", class:"cashrow", onclick: onclick || (()=>openCashDetail(c))},
     h("span",{class:"t"}, h("b",{text:c.drawer_name}), h("span",{class:"hint", text:(c.by_name||"")+" · counted "+cash(c.counted)+" · dropped "+cash(Math.max(0, c.drop_amt))})),
     h("span",{class:"tag "+r.cls, text:r.text}));
 }
 function viewCash(){
-  if (!isAdmin()){ S.view = "overview"; return viewOverview(); }
-  const today = shiftDay(), ds = drawers(), out = [];
-  out.push(h("section",{class:"stack"},
-    h("button",{type:"button", class:"back", onclick:()=>go(S.cashBack || "settings")}, S.cashBack && S.cashBack!=="settings" ? "← Back" : "← Settings"),
-    h("div",{class:"sec-head"}, h("h2",{text:"Cash-outs"}))));
+  if (!showCashTab()){ S.view = "overview"; return viewOverview(); }
+  const admin = isAdmin(), today = shiftDay(), ds = drawers(), out = [];
+  out.push(h("div",{class:"sec-head"}, h("h2",{class:"sectitle", text:"Drawers"})));
   if (!ds.length){
-    out.push(emptyCard("Set up your drawers", "Add each cash drawer that gets counted at close, with the bank it starts the night with. Then bartenders can cash out from the Tasks tab after 5 PM.",
-      canWrite() ? h("button",{type:"button", class:"btn", onclick:()=>openDrawerForm(null)},"Add a drawer") : null));
+    out.push(admin
+      ? emptyCard("Set up your drawers", "Add each cash drawer that gets counted at close, with the bank it starts the night with. Then whoever closes can count it here.",
+          canWrite() ? h("button",{type:"button", class:"btn", onclick:()=>openDrawerForm(null)},"Add a drawer") : null)
+      : emptyCard("No drawers yet", "Once a manager sets up the cash drawers, you'll count them here at close."));
     return out;
   }
   /* tonight */
+  const hr = new Date().getHours(), late = hr >= 17 || hr < ROLL_HOUR;
   out.push(h("section",{class:"card stack cashtonight"},
     h("div",{class:"row"}, h("h3",{text:"Tonight"}), h("span",{class:"hint", text:shortDay(today)})),
     ds.map(d=>{ const c = cashFor(today, d.id);
-      return c ? cashRow(c) : h("div",{class:"cashrow todo"}, h("span",{class:"t"}, h("b",{text:d.name}), h("span",{class:"hint", text:"Not counted yet · "+cash(d.bank)+" bank"})),
-        canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>openCashOut(d)},"Count") : null); })));
+      if (c) return admin ? cashRow(c) : cashRow(c, ()=>openCashOut(d));
+      return h("div",{class:"cashrow todo"}, h("span",{class:"t"}, h("b",{text:d.name}), h("span",{class:"hint", text:"Not counted yet · "+cash(d.bank)+" bank"})),
+        canWrite() ? h("button",{type:"button", class:"btn small"+(late ? "" : " ghost"), onclick:()=>openCashOut(d)},"Count") : null); }),
+    h("p",{class:"hint", style:"margin:0", text: admin ? "Tap a count to see the breakdown or fix it." : "Count each drawer at close, before you pull tips. Tap a count to redo it."})));
+  if (!admin) return out;
   /* history */
   const range = S.cashRange || 30, from = addDays(today, -range);
   const list = cashouts().filter(c=>c.day < today && c.day >= from);
@@ -2602,14 +2612,14 @@ function viewCash(){
     const days = [...new Set(list.map(c=>c.day))].sort().reverse();
     sec.append(h("div",{class:"stack cashdays"}, days.map(day=>h("div",{class:"cashday"},
       h("div",{class:"divider", text:shortDay(day)}),
-      list.filter(c=>c.day===day).sort((a,b)=>a.drawer_name.localeCompare(b.drawer_name)).map(cashRow),
+      list.filter(c=>c.day===day).sort((a,b)=>a.drawer_name.localeCompare(b.drawer_name)).map(c=>cashRow(c)),
       ds.filter(d=>!list.some(c=>c.day===day && c.drawer_id===d.id)).map(d=>h("div",{class:"cashrow todo"}, h("span",{class:"t"}, h("b",{text:d.name}), h("span",{class:"hint", text:"No count"})),
         canWrite() ? h("button",{type:"button", class:"btn ghost small", onclick:()=>openCashOut(d, day)},"Add") : null))))));
   }
   out.push(sec);
   /* setup */
   out.push(h("section",{class:"stack"},
-    h("h3",{class:"sethead", text:"Drawers"}),
+    h("h3",{class:"sethead", text:"Setup"}),
     ds.map(d=>setRow(d.name, "Starting bank", cash(d.bank), ()=>openDrawerForm(d))),
     canWrite() ? h("button",{type:"button", class:"btn ghost small", style:"align-self:flex-start", onclick:()=>openDrawerForm(null)},"+ Add a drawer") : null,
     setRow("Flag a drawer", "When it's off by more than this, managers get an alert", cash(cashTol()), openCashTolSetting)));
@@ -2634,7 +2644,7 @@ function render(){
   const m = me(), loggedIn = !!(S.session && m);
   $("whoBtn").hidden = !loggedIn;
   $("settingsBtn").hidden = !loggedIn;
-  $("settingsBtn").setAttribute("aria-pressed", String(S.view==="settings" || S.view==="team" || (S.view==="cash" && (S.cashBack||"settings")==="settings") || (S.view==="notify" && S.notifyBack==="settings")));
+  $("settingsBtn").setAttribute("aria-pressed", String(S.view==="settings" || S.view==="team" || (S.view==="notify" && S.notifyBack==="settings")));
   $("whoName").textContent = loggedIn ? m.name + (m.manager ? " · Mgr" : "") : "";
   $("whoDot").textContent = loggedIn ? initials(m.name) : "?";
   $("tabs").hidden = !loggedIn;
@@ -2644,14 +2654,18 @@ function render(){
   else if (!m) kids = S.offline ? [h("p",{class:"hint", text:"You're offline. Connect once to load your lists."})] : skeleton("home");
   else {
     const admin = isAdmin();
-    if (!admin && (S.view==="team" || S.view==="cash")) S.view = "overview";
-    const tv = S.view==="notify" ? (S.notifyBack || "overview") : S.view==="cash" ? (S.cashBack || "settings") : S.view;
-    const tab = tv==="settings" || tv==="team" ? "settings" : tv==="inventory" ? "inventory" : tv==="schedule" ? "schedule" : tv==="events" ? "events" : "shifts";
+    if (!admin && S.view==="team") S.view = "overview";
+    if (S.view==="cash" && !showCashTab()) S.view = "overview";
+    const tv = S.view==="notify" ? (S.notifyBack || "overview") : S.view;
+    const tab = tv==="settings" || tv==="team" ? "settings" : tv==="inventory" ? "inventory" : tv==="schedule" ? "schedule" : tv==="events" ? "events" : tv==="cash" ? "cash" : "shifts";
     $("tabSched").setAttribute("aria-pressed", String(tab==="schedule"));
     $("tabSched").classList.toggle("has-dot", forYouShifts().length > 0);
     $("tabShifts").setAttribute("aria-pressed", String(tab==="shifts"));
     $("tabInv").setAttribute("aria-pressed", String(tab==="inventory"));
     $("tabEvents").setAttribute("aria-pressed", String(tab==="events"));
+    $("tabCash").hidden = !showCashTab();
+    $("tabCash").setAttribute("aria-pressed", String(tab==="cash"));
+    $("tabCash").classList.toggle("has-dot", tab!=="cash" && cashDot());
     kids = S.view==="team" ? viewTeam() : S.view==="cash" ? viewCash() : S.view==="inventory" ? viewInventory() : S.view==="notify" ? viewNotify() : S.view==="settings" ? viewSettings() : S.view==="schedule" ? viewSchedule() : S.view==="events" ? viewEvents() : viewOverview();
   }
   const active = document.activeElement, aid = active && active.id;
@@ -2662,10 +2676,10 @@ function render(){
 }
 
 /* ---------- wiring ---------- */
-$("whoBtn").addEventListener("click", ()=>{ if (!["settings","team","notify","cash"].includes(S.view)) S.settingsBack = S.view; go("settings"); });
+$("whoBtn").addEventListener("click", ()=>{ if (!["settings","team","notify"].includes(S.view)) S.settingsBack = S.view; go("settings"); });
 $("settingsBtn").addEventListener("click", ()=>{
-  if (S.view==="settings" || S.view==="team" || (S.view==="cash" && (S.cashBack||"settings")==="settings")) return go(S.settingsBack || "overview");   // tap again: back to the tab you were on
-  if (S.view!=="notify" && S.view!=="cash") S.settingsBack = S.view;
+  if (S.view==="settings" || S.view==="team") return go(S.settingsBack || "overview");   // tap again: back to the tab you were on
+  if (S.view!=="notify") S.settingsBack = S.view;
   go("settings");
 });
 $("installBtn").addEventListener("click", install);
@@ -2674,6 +2688,7 @@ $("tabShifts").addEventListener("click", ()=>go("overview"));
 $("tabInv").addEventListener("click", ()=>go("inventory"));
 $("tabSched").addEventListener("click", ()=>go("schedule"));
 $("tabEvents").addEventListener("click", ()=>go("events"));
+$("tabCash").addEventListener("click", ()=>go("cash"));
 document.addEventListener("keydown", e=>{
   if (S.session || !document.querySelector(".keypad") || e.target.matches("input,select,textarea")) return;
   if (/^\d$/.test(e.key)) pressKey(e.key); else if (e.key==="Backspace") pressKey("del"); else if (e.key==="Enter") pressKey("go");
@@ -2754,9 +2769,9 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
   if (location.hash==="#inventory") S.view = "inventory";   // opened from an order or out-of-stock notification
   if (location.hash==="#schedule") S.view = "schedule";     // opened from a shift swap notification
   if (location.hash==="#events") S.view = "events";
-  if (location.hash==="#cash"){ S.view = "cash"; S.cashBack = "overview"; }   // a drawer came up short
+  if (location.hash==="#cash") S.view = "cash";   // a drawer came up short
   render();
   if (S.session && configured()) refresh();
   checkLatest(true);
 })();
-window.addEventListener("hashchange", ()=>{ if (!S.session) return; if (location.hash==="#inventory") go("inventory"); if (location.hash==="#schedule") go("schedule"); if (location.hash==="#events") go("events"); if (location.hash==="#cash") openCashView("overview"); });
+window.addEventListener("hashchange", ()=>{ if (!S.session) return; if (location.hash==="#inventory") go("inventory"); if (location.hash==="#schedule") go("schedule"); if (location.hash==="#events") go("events"); if (location.hash==="#cash") go("cash"); });
