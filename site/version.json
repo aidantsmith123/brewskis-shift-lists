@@ -1,5 +1,5 @@
 {
-  "version": 34,
-  "date": "2026-10-31",
-  "notes": "Party bookings: inquiries from the website form land on the Events tab, with holds, deposits, a staff party sheet and reminders for managers."
+  "version": 35,
+  "date": "2026-11-01",
+  "notes": "Cash-out at close: count each drawer bill by bill, enter Toast's cash sales and card tips, and see right away if it's over or short. Managers get an alert and a history of every night."
 }

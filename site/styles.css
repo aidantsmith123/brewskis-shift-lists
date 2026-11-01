@@ -864,3 +864,43 @@ h2.sectitle{font-size:24px}
 .plainpick .kindopt{--k:var(--blue);--ks:var(--soft)}
 .howpick{grid-template-columns:repeat(3,1fr)}
 .howpick .kindopt{justify-content:center;padding:10px 6px}
+
+/* v35: cash-out at close */
+.cstep{display:flex;flex-direction:column;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.cstep h3{margin:0;font-size:15px;color:var(--muted);font-weight:700}
+.bills{display:flex;flex-direction:column;gap:6px}
+.billrow{display:grid;grid-template-columns:58px 14px 1fr 88px;align-items:center;gap:8px}
+.billrow .bden{font-family:var(--serif);font-weight:700;font-size:18px;margin:0}
+.billrow .bx{color:var(--muted);text-align:center}
+.billrow input{min-width:0;font-variant-numeric:tabular-nums;text-align:right}
+.billrow .bsub{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;font-size:15px}
+.ctotalrow{border-top:1px solid var(--line);padding-top:10px;font-weight:600}
+.ctotal{font-family:var(--serif);font-size:24px;font-variant-numeric:tabular-nums}
+.pouts summary{cursor:pointer;color:var(--blue);font-weight:600;font-size:15px;padding:2px 0}
+.pouts[open] summary{margin-bottom:8px}
+.cashres{display:flex;flex-direction:column;gap:10px}
+.cr-top{gap:10px}
+.tag.big{font-size:15px;padding:4px 12px}
+.cr-steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0;counter-reset:cr}
+.cr-steps li{counter-increment:cr;display:flex;align-items:baseline;gap:10px;padding:9px 0;border-top:1px dashed var(--line)}
+.cr-steps li:first-child{border-top:0}
+.cr-steps li::before{content:counter(cr);width:22px;height:22px;flex:none;border-radius:50%;background:var(--soft);color:var(--muted);font-size:12.5px;font-weight:700;display:grid;place-items:center;align-self:center}
+.cr-steps li span{flex:1}
+.cr-steps li b{font-family:var(--serif);font-size:19px;font-variant-numeric:tabular-nums}
+.cashdone{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;padding:18px 12px;border-radius:14px;background:var(--done-soft)}
+.cashdone h2{margin:0;font-family:var(--serif);font-size:30px;color:var(--done)}
+.cashdone.warn{background:var(--warn-soft)} .cashdone.warn h2{color:var(--warn)}
+.cashdone.danger{background:var(--danger-soft)} .cashdone.danger h2{color:var(--danger)}
+.cashrow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:11px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.cashrow .t{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.cashrow.todo{border-style:dashed;background:transparent}
+.cashtonight{gap:8px}
+.cashtonight>.row h3{margin:0;font-family:var(--serif);font-size:20px}
+.cashtonight .cashrow{background:var(--paper)}
+.cashstats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.cstat{display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-width:0}
+.cstat b{font-family:var(--serif);font-size:22px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.cstat small{color:var(--muted);font-size:12.5px}
+.cstat.neg b{color:var(--danger)} .cstat.pos b{color:var(--done)}
+.cashday{display:flex;flex-direction:column;gap:6px}
+.cashday .divider{border-radius:8px}
