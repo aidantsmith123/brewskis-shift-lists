@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 41;
+const APP_VERSION = 42;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -2664,6 +2664,10 @@ setInterval(()=>{ if (!document.hidden && !openDrop && !(document.activeElement 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
 }
+
+/* no zooming: iPhones ignore the page's no-zoom setting, so stop the pinch gesture itself */
+["gesturestart","gesturechange","gestureend"].forEach(t=>document.addEventListener(t, e=>e.preventDefault(), {passive:false}));
+document.addEventListener("touchmove", e=>{ if (e.touches.length > 1 || (e.scale && e.scale !== 1)) e.preventDefault(); }, {passive:false});
 
 /* pull down at the top of the screen to refresh */
 (function pullToRefresh(){

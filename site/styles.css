@@ -1,6 +1,6 @@
 /* Base reset */
 :root{color-scheme:light}
-html{-webkit-text-size-adjust:100%;touch-action:manipulation}  /* no double-tap zoom; pinch zoom and zoom-on-typing still work */
+html{-webkit-text-size-adjust:100%;touch-action:pan-x pan-y}  /* no zooming: no pinch, no double-tap, no zoom when typing */
 body{margin:0}
 img{max-width:100%}
 [hidden]{display:none!important}

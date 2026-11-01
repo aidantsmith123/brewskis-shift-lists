@@ -1,5 +1,5 @@
 {
-  "version": 41,
+  "version": 42,
   "date": "2026-11-01",
-  "notes": "Pick-lists are compact again: each one shows your choice with a ▾, and tapping it opens the choices underneath as buttons."
+  "notes": "No more zooming: pinching, double-tapping and typing in a box no longer zoom the app."
 }
