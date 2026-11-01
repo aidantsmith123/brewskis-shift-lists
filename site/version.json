@@ -1,5 +1,5 @@
 {
-  "version": 39,
+  "version": 40,
   "date": "2026-11-01",
-  "notes": "Party bookings only add the \"Reply to party inquiry\" task now; holds and bookings no longer add deposit, headcount, party-day or thank-you tasks."
+  "notes": "Pick-lists are buttons now: roles, people, repeats, packages, suppliers and the rest show every choice as a button instead of a pull-down menu."
 }

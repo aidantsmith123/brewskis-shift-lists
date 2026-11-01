@@ -921,3 +921,16 @@ h2.sectitle{font-size:24px}
 .refill .cashrow{background:var(--paper)}
 .linkish{border:0;background:none;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer}
 .cashstats.two{grid-template-columns:repeat(2,1fr)}
+
+/* v40: pick-lists are rows of buttons, not pull-down menus */
+select.picked{display:none !important}
+.btnpick{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.btnpick button{min-height:40px;padding:8px 14px;border:1.5px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink);
+  font:inherit;font-size:15px;font-weight:600;line-height:1.2;text-align:center;cursor:pointer}
+.btnpick button[aria-checked="true"]{background:var(--blue);border-color:var(--blue);color:var(--blue-ink)}
+.btnpick button:disabled{opacity:.45;cursor:default}
+.btnpick button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+@media (prefers-reduced-motion:no-preference){ .btnpick button{transition:background-color .15s,border-color .15s,transform .08s} .btnpick button:active:not(:disabled){transform:scale(.96)} }
+/* a field with buttons gets its own full-width row, even in a two-column form */
+.lbl:has(> select.picked){grid-column:1/-1;flex:1 1 100% !important;min-width:0}
+.btnpick[hidden]{display:none}

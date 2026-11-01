@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 39;
+const APP_VERSION = 40;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -207,6 +207,35 @@ function logOut(msg){
   if (msg) toast(msg);
   render();
 }
+
+/* ---------- pick-lists as buttons ----------
+   Every <select> in the app is shown as a row of buttons instead of a pull-down menu. The select stays in the page,
+   hidden, so the code that builds it, reads .value or listens for "change" works the same. */
+const nativeValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+function buttonize(sel){
+  if (sel._pick || sel.dataset.native) return;
+  const box = h("div",{class:"btnpick", role:"radiogroup"});
+  const lbl = sel.closest("label"); if (lbl) box.setAttribute("aria-label", (lbl.firstChild && lbl.firstChild.nodeType===3 ? lbl.firstChild.textContent : sel.id).trim());
+  const draw = () => {
+    box.hidden = sel.hidden;
+    box.replaceChildren(...[...sel.options].map(o=>h("button",{type:"button", role:"radio", "aria-checked":String(o.value===nativeValue.get.call(sel)),
+      disabled: sel.disabled || o.disabled, "data-value":o.value, onclick:()=>{
+        if (o.value===nativeValue.get.call(sel)) return;
+        nativeValue.set.call(sel, o.value); draw();
+        sel.dispatchEvent(new Event("input",{bubbles:true})); sel.dispatchEvent(new Event("change",{bubbles:true}));
+      }}, o.textContent)));
+  };
+  /* code that sets .value directly, or swaps the options, redraws the buttons */
+  Object.defineProperty(sel, "value", {configurable:true, get(){ return nativeValue.get.call(sel); }, set(v){ nativeValue.set.call(sel, v); draw(); }});
+  new MutationObserver(draw).observe(sel, {childList:true, subtree:true, attributes:true, attributeFilter:["disabled","selected","hidden"]});
+  sel.addEventListener("change", draw);
+  sel._pick = box; sel.classList.add("picked"); sel.setAttribute("aria-hidden","true"); sel.tabIndex = -1;
+  sel.after(box); draw();
+}
+new MutationObserver(muts=>{ for (const m of muts) for (const n of m.addedNodes){
+  if (n.nodeType!==1) continue;
+  if (n.tagName==="SELECT") buttonize(n); else if (n.querySelectorAll) n.querySelectorAll("select").forEach(buttonize);
+} }).observe(document.documentElement, {childList:true, subtree:true});
 
 /* ---------- helpers ---------- */
 function h(tag, props, ...kids){
