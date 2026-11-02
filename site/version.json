@@ -1,5 +1,5 @@
 {
-  "version": 46,
+  "version": 47,
   "date": "2026-11-02",
-  "notes": "Daily cash for Aidan, Tom and Mandy only: the day's cash sales, payouts and cash left over, with a notification to the other two."
+  "notes": "Daily cash: \"Cash left over\" is now COH (cash on hand)."
 }

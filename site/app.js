@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 46;
+const APP_VERSION = 47;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -80,7 +80,7 @@ function errMsg(e){
     need_amount:"Enter how much it's short.",
     pick_area:"Pick front of house or back of house.",
     not_allowed:"Only Aidan, Tom and Mandy can do that.",
-    need_numbers:"Enter the cash sales and the cash left over.",
+    need_numbers:"Enter the cash sales and the COH.",
     need_payee:"Add who each payout went to.",
     too_many:"That's a lot of alerts in a few minutes. Try again shortly.",
     name_taken:"There's already a drawer with that name."
@@ -2481,7 +2481,7 @@ function openNotifyManager(){
 }
 
 /* ---------- daily cash ----------
-   The day's cash sales, payouts and the cash left over (counted). Only Aidan, Tom and Mandy: the server sends it to
+   The day's cash sales, payouts and the COH (cash on hand, counted). Only Aidan, Tom and Mandy: the server sends it to
    nobody else and refuses anyone else's changes, so me().cash_book here only decides what to draw. */
 const canCashBook = () => !!(me() && me().cash_book);
 const dailyCash = () => D().daily_cash || [];
@@ -2499,7 +2499,7 @@ function dcStats(d){
   return h("div",{class:"cashstats"},
     h("div",{class:"cstat"}, h("small",{text:"Cash sales"}), h("b",{text:cash(d.cash_sales)})),
     h("div",{class:"cstat"}, h("small",{text:"Payouts"}), h("b",{text:cash(d.payouts_total)})),
-    h("div",{class:"cstat"+(Number(d.left_over) < 0 ? " neg" : "")}, h("small",{text:"Left over"}), h("b",{text:signed(d.left_over)})));
+    h("div",{class:"cstat"+(Number(d.left_over) < 0 ? " neg" : "")}, h("small",{text:"COH"}), h("b",{text:signed(d.left_over)})));
 }
 function dailyCashCard(){
   const list = dailyCash(), latest = list[0];
@@ -2507,7 +2507,7 @@ function dailyCashCard(){
     h("div",{class:"row"}, h("h2",{text:"Daily cash"}),
       canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>openDailyCashForm(null)},"+ Enter a day") : null),
     h("p",{class:"hint dcpriv"}, icon("lock"), h("span",{text:"Only Aidan, Tom and Mandy can see this."})));
-  if (!latest){ sec.append(h("p",{class:"hint", style:"margin:0", text:"Enter each day’s cash sales, payouts and the cash left over. The other two get a notification with the numbers."})); return sec; }
+  if (!latest){ sec.append(h("p",{class:"hint", style:"margin:0", text:"Enter each day’s cash sales, payouts and COH (cash on hand). The other two get a notification with the numbers."})); return sec; }
   sec.append(h("button",{type:"button", class:"dclatest", onclick:()=>openDailyCashForm(latest.day)},
     h("div",{class:"row"}, h("b",{text:longDay(latest.day)}), h("span",{class:"hint", text:(latest.by_name||"")+" · "+when(latest.at)})),
     dcStats(latest),
@@ -2517,13 +2517,13 @@ function dailyCashCard(){
   if (rest.length) sec.append(h("div",{class:"stack", style:"gap:6px"}, h("b",{class:"subhead", text:"Earlier days"}),
     rest.map(d=>h("button",{type:"button", class:"cashrow", onclick:()=>openDailyCashForm(d.day)},
       h("span",{class:"t"}, h("b",{text:shortDay(d.day)}),
-        h("span",{class:"hint", text:"Sales "+cash(d.cash_sales)+" · Payouts "+cash(d.payouts_total)+" · Left "+signed(d.left_over)}))))));
+        h("span",{class:"hint", text:"Sales "+cash(d.cash_sales)+" · Payouts "+cash(d.payouts_total)+" · COH "+signed(d.left_over)}))))));
   sec.append(h("button",{type:"button", class:"btn ghost small", style:"align-self:flex-start", onclick:downloadDailyCash},"Download CSV"));
   return sec;
 }
 async function downloadDailyCash(){
   const q = v => { const s = String(v==null ? "" : v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
-  const rows = [["Date","Cash sales","Payouts total","Payouts","Left over","Note","Entered by"]];
+  const rows = [["Date","Cash sales","Payouts total","Payouts","COH","Note","Entered by"]];
   dailyCash().slice().sort((a,b)=>a.day.localeCompare(b.day)).forEach(d=>rows.push([d.day, d.cash_sales, d.payouts_total,
     (d.payouts||[]).map(p=>p.who+" "+p.amount).join("; "), d.left_over, d.note, d.by_name]));
   const name = "brewskis-daily-cash-"+shiftDay()+".csv", file = new File([rows.map(r=>r.map(q).join(",")).join("\n")], name, {type:"text/csv"});
@@ -2567,14 +2567,14 @@ function openDailyCashForm(day){
       h("div",{class:"row", style:"margin-top:8px"},
         h("button",{type:"button", class:"linkbtn", onclick:()=>{ addRow().focus(); }},"+ Add payout"),
         h("span",{class:"hint"}, "Total ", total))),
-    h("label",{class:"lbl", for:"dcLeft"}, "Cash left over ($)", left),
-    h("p",{class:"hint", style:"margin:-6px 0 0", text:"What you counted after the payouts."}),
+    h("label",{class:"lbl", for:"dcLeft"}, "COH ($)", left),
+    h("p",{class:"hint", style:"margin:-6px 0 0", text:"Cash on hand: what you counted after the payouts."}),
     h("label",{class:"lbl", for:"dcNote"}, "Note", note),
     err,
     h("button",{type:"button", class:"btn", onclick:async ev=>{
       if (!date.value){ err.textContent = "Pick the day."; return; }
       if (sales.value.trim()===""){ err.textContent = "Enter the cash sales."; sales.focus(); return; }
-      if (left.value.trim()===""){ err.textContent = "Enter the cash left over."; left.focus(); return; }
+      if (left.value.trim()===""){ err.textContent = "Enter the COH."; left.focus(); return; }
       const payouts = [...rowsBox.querySelectorAll(".dcrow")].map(r=>({who:r.querySelector(".dcwho").value.trim(), amount:r.querySelector(".dcamt").value.trim()}))
         .filter(p=>p.who || p.amount);
       if (payouts.some(p=>!p.who)){ err.textContent = "Add who each payout went to."; return; }

@@ -942,7 +942,7 @@ begin
         out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
           'title', case when r.edits > 0 then 'Daily cash updated · ' else 'Daily cash · ' end || to_char(r.day, 'Dy Mon FMDD'),
           'body', 'Sales ' || _money(r.cash_sales) || ' · Payouts ' || _money(r.payouts_total) ||
-                  ' · Left over ' || case when r.left_over < 0 then '−' else '' end || _money(r.left_over) ||
+                  ' · COH ' || case when r.left_over < 0 then '−' else '' end || _money(r.left_over) ||
                   coalesce(' (' || (select string_agg((x->>'who') || ' ' || _money((x->>'amount')::numeric), ', ') from jsonb_array_elements(r.payouts) x) || ')', '') ||
                   ' · ' || coalesce(r.by_name, ''),
           'url', './#dailycash', 'tag', 'dcash');
