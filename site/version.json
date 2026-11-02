@@ -1,5 +1,5 @@
 {
-  "version": 43,
-  "date": "2026-11-01",
-  "notes": "Opening a pick-list scrolls it to the middle of the screen, so the choices are right in front of you."
+  "version": 44,
+  "date": "2026-11-02",
+  "notes": "Notify a manager: a button on the Tasks tab sends the managers an alert about anything, front or back of house, to one manager or all. Managers mark it handled."
 }

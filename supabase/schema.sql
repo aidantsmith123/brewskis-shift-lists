@@ -268,6 +268,10 @@ begin
                   'party_deposit', (select value from app_settings where name = 'party_deposit'),
                   'party_form_last', (select max(submitted_at) from parties where source = 'form'),
                   'cash_tolerance', _cash_tolerance()) else '{}'::json end,
+    -- managers: open alerts plus the last 3 days; everyone else: what they sent in the last 2 days
+    'alerts', coalesce((select json_agg(a order by a.at desc) from manager_alerts a
+                        where case when mgr then a.handled_at is null or a.at > now() - interval '3 days'
+                                   else a.from_id = me.id and a.at > now() - interval '2 days' end), '[]'),
     'drawers', coalesce((select json_agg(json_build_object('id', d.id, 'name', d.name, 'bank', d.bank) order by d.sort, d.name)
                         from drawers d where d.active), '[]'),
     -- managers: the last 3 months of cash-outs; everyone else: tonight's
@@ -275,7 +279,7 @@ begin
                           where c.day >= _shift_day() - case when mgr then 92 else 0 end), '[]'),
     'log', coalesce((select json_agg(x order by x.at desc) from (
         select id, at, who, who_name, kind, text, place from log
-         where mgr or (kind <> 'ordered' and place <> 'Cash') order by at desc limit 1000) x), '[]')
+         where mgr or (kind <> 'ordered' and place not in ('Cash','Alerts')) order by at desc limit 1000) x), '[]')
   );
 end $$;
 
@@ -628,11 +632,11 @@ $$;
 
 -- Settings with defaults filled in and junk thrown out.
 create or replace function _push_prefs(p jsonb) returns jsonb language plpgsql immutable as $$
-declare d jsonb := '{"orders":true,"lead_hours":2,"overdue":true,"out":true,"summary":true,"swaps":true,"coverage":true,"tasks":true,"cash":true,"summary_time":"09:00","quiet":true,"quiet_start":"00:00","quiet_end":"08:00"}';
+declare d jsonb := '{"orders":true,"lead_hours":2,"overdue":true,"out":true,"summary":true,"swaps":true,"coverage":true,"tasks":true,"cash":true,"staff":true,"summary_time":"09:00","quiet":true,"quiet_start":"00:00","quiet_end":"08:00"}';
         r jsonb := d; k text;
 begin
   p := coalesce(p, '{}');
-  foreach k in array array['orders','overdue','out','summary','swaps','coverage','tasks','cash','quiet'] loop
+  foreach k in array array['orders','overdue','out','summary','swaps','coverage','tasks','cash','staff','quiet'] loop
     if jsonb_typeof(p->k) = 'boolean' then r := jsonb_set(r, array[k], p->k); end if;
   end loop;
   if jsonb_typeof(p->'lead_hours') = 'number' then r := jsonb_set(r, '{lead_hours}', to_jsonb(least(greatest((p->>'lead_hours')::numeric::int, 1), 48))); end if;
@@ -748,7 +752,7 @@ declare tz text := 'America/New_York'; lnow timestamp := p_now at time zone tz; 
         r record; ov_title text[]; ov_body text[]; os_title text[]; os_body text[];
         total int; done_n int; missed text[]; n_over int; n_out int; body text; st time; due_now boolean;
         endpoint_key text; quiet boolean; sw text[]; cv text[]; mgr boolean; nt text[]; nt_star boolean; nt_party int;
-        cs text[]; n_short int; cash_line text;
+        cs text[]; n_short int; cash_line text; sa text[]; sa_direct boolean;
 begin
   delete from push_sent where sent_at < p_now - interval '45 days';
   -- everyone who turned notifications on gets coverage alerts; the rest is for managers
@@ -921,6 +925,30 @@ begin
           'title', array_length(nt, 1) || case when nt_party = array_length(nt, 1) then ' new party inquiries' else ' new tasks' end,
           'body', array_to_string(nt[1:3], '. ') || case when array_length(nt,1) > 3 then '…' else '' end,
           'url', case when nt_party = array_length(nt, 1) then './#events' else './' end, 'tag', 'task');
+      end if;
+    end if;
+
+    -- 10. alerts from staff: to this manager by name (even in quiet hours), or to any manager
+    if mgr and (p->>'staff')::boolean then
+      sa := '{}'; sa_direct := false;
+      for r in select a.* from manager_alerts a
+                where a.handled_at is null and a.at > p_now - interval '24 hours' and a.at > sub.created_at - interval '1 hour'
+                  and a.from_id is distinct from sub.staff_id
+                  and (a.to_staff = sub.staff_id or (a.to_staff is null and not quiet))
+                order by a.at loop
+        k := 'staff:' || endpoint_key || ':' || r.id;
+        insert into push_sent(key) values (k) on conflict do nothing; get diagnostics rc = row_count;
+        continue when rc = 0;
+        sa_direct := sa_direct or r.to_staff = sub.staff_id;
+        sa := sa || (r.from_name || ' · ' || case r.area when 'foh' then 'FOH' else 'BOH' end || ': ' || left(r.text, 140));
+      end loop;
+      if array_length(sa, 1) = 1 then
+        out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
+          'title', case when sa_direct then 'Alert for you' else 'Alert for a manager' end, 'body', sa[1], 'url', './#alerts', 'tag', 'staff');
+      elsif array_length(sa, 1) > 1 then
+        out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
+          'title', array_length(sa, 1) || ' alerts from staff', 'body', array_to_string(sa[1:3], '. ') || case when array_length(sa,1) > 3 then '…' else '' end,
+          'url', './#alerts', 'tag', 'staff');
       end if;
     end if;
 
@@ -2027,6 +2055,61 @@ declare me staff := _mgr(p_token); c cashouts;
 begin
   delete from cashouts where id = p_id returning * into c;
   if found then perform _log(me, 'removed', 'the ' || c.drawer_name || ' cash-out for ' || to_char(c.day, 'Dy Mon FMDD'), 'Cash'); end if;
+end $$;
+
+-- ---------- notify a manager (added Nov 2026) ----------
+-- Anyone can send the managers a quick heads-up about something: front or back of house, optionally to one manager.
+-- Managers get a notification (one sent to them by name comes through even during their quiet hours) and mark it handled.
+-- The sender sees whether it's been handled. Other staff don't see it.
+create table if not exists manager_alerts (
+  id text primary key default gen_random_uuid()::text,
+  area text not null check (area in ('foh','boh')),
+  to_staff text references staff(id) on delete set null,   -- null = any manager
+  to_name text,
+  text text not null,
+  from_id text references staff(id) on delete set null,
+  from_name text not null,
+  at timestamptz not null default now(),
+  handled_at timestamptz,
+  handled_by_name text
+);
+create index if not exists manager_alerts_at_idx on manager_alerts (at desc);
+do $$
+begin
+  alter table manager_alerts enable row level security;
+  revoke all on table manager_alerts from public;
+  if exists (select 1 from pg_roles where rolname='anon') then revoke all on table manager_alerts from anon; end if;
+  if exists (select 1 from pg_roles where rolname='authenticated') then revoke all on table manager_alerts from authenticated; end if;
+end $$;
+
+-- Send the managers an alert (anyone logged in). p_area: foh | boh. p_to: one manager's id, or null for any manager.
+create or replace function api_notify_manager(p_token uuid, p_area text, p_to text, p_text text) returns text language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _me(p_token); t text := left(trim(coalesce(p_text,'')), 600); m staff; id_ text;
+begin
+  if p_area is null or p_area not in ('foh','boh') then raise exception 'pick_area'; end if;
+  if t = '' then raise exception 'empty'; end if;
+  if (select count(*) from manager_alerts where from_id = me.id and at > now() - interval '10 minutes') >= 10 then raise exception 'too_many'; end if;
+  if nullif(p_to,'') is not null then
+    select * into m from staff where id = p_to;
+    if not found or not _is_manager(m.roles) then raise exception 'not_found'; end if;
+  end if;
+  insert into manager_alerts (area, to_staff, to_name, text, from_id, from_name)
+  values (p_area, m.id, m.name, t, me.id, me.name) returning id into id_;
+  perform _log(me, 'alerted', case when m.id is null then 'the managers' else m.name end || ' (' ||
+               case p_area when 'foh' then 'front of house' else 'back of house' end || '): ' || left(t, 120), 'Alerts');
+  perform _push_kick();
+  return id_;
+end $$;
+
+-- Managers: mark an alert handled (p_done false reopens it).
+create or replace function api_handle_alert(p_token uuid, p_id text, p_done boolean default true) returns void language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _mgr(p_token); a manager_alerts;
+begin
+  update manager_alerts set handled_at = case when p_done then now() end, handled_by_name = case when p_done then me.name end
+   where id = p_id and (handled_at is null) = coalesce(p_done, true) returning * into a;
+  if found then perform _log(me, case when p_done then 'handled' else 'reopened' end, a.from_name || '’s alert: ' || left(a.text, 120), 'Alerts'); end if;
 end $$;
 
 -- ---------- who may call what ----------

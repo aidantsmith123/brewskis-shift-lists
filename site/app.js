@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 43;
+const APP_VERSION = 44;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -78,6 +78,8 @@ function errMsg(e){
     bad_status:"Couldn't change that. Try again.",
     foh_only:"Only front-of-house staff and managers can cash out.",
     need_amount:"Enter how much it's short.",
+    pick_area:"Pick front of house or back of house.",
+    too_many:"That's a lot of alerts in a few minutes. Try again shortly.",
     name_taken:"There's already a drawer with that name."
   })[c] || "Couldn't save. Try again in a moment.";
 }
@@ -292,7 +294,7 @@ function when(iso){
   return d.toDateString()===now.toDateString() ? t : d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+", "+t;
 }
 function initials(n){ return (n||"?").trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase() || "?"; }
-const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], shifts:[], covers:[], events:[], parties:[], settings:{}, drawers:[], cashouts:[], log:[], me:null};
+const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], shifts:[], covers:[], events:[], parties:[], settings:{}, drawers:[], cashouts:[], alerts:[], log:[], me:null};
 const me = () => D().me;
 const isAdmin = () => !!(me() && me().manager);
 const canWrite = () => !!me() && !S.offline;
@@ -626,7 +628,7 @@ function viewSettings(){
 
   out.push(h("section",{class:"stack"},
     h("h3",{class:"sethead", text:"This phone"}),
-    setRow("Notifications", admin ? "Coverage, new tasks, orders, overdue tasks, cash-outs, nightly recap" : "Shift coverage and new tasks", pushVal, ()=>openNotify()),
+    setRow("Notifications", admin ? "Coverage, new tasks, staff alerts, orders, overdue tasks, cash-outs, recap" : "Shift coverage and new tasks", pushVal, ()=>openNotify()),
     h("label",{class:"soundrow", for:"soundToggle"},
       h("span",{}, h("b",{text:"Sounds"}), h("span",{class:"hint", text:"A soft tap on every button, a clink when you check off a task, and ticks when you count."+(navigator.vibrate ? " Includes a short vibration." : "")})),
       h("input",{type:"checkbox", id:"soundToggle", class:"switch", role:"switch", checked:soundOn, onchange:e=>{ setSound(e.target.checked); render(); }})),
@@ -741,6 +743,7 @@ function viewNotify(){
         h("li",{text:"Order deadlines coming up that haven't been ordered"}),
         h("li",{text:"Tasks that go overdue, and items counted at zero"}),
         h("li",{text:"A drawer that comes up short at close"}),
+        h("li",{text:"Alerts from staff who tap Notify a manager"}),
         h("li",{text:"A recap of each shift day's tasks"}))
       : h("ul",{class:"steps"},
         h("li",{text:"Right away when a shift you can work needs coverage"}),
@@ -765,6 +768,7 @@ function viewNotify(){
           [[1,"1 hour before"],[2,"2 hours before"],[4,"4 hours before"],[24,"1 day before"]].map(([v,l])=>h("option",{value:v, selected:Number(p.lead_hours)===v}, l))))),
     prefRow("overdue", "Overdue tasks", "When a task passes its due date or due time without being checked off. One alert per task."),
     prefRow("out", "Out of stock", "When someone counts an item at 0."),
+    prefRow("staff", "Alerts from staff", "When someone taps Notify a manager. One sent to you by name comes through even during quiet hours."),
     prefRow("cash", "Short drawers", "When a drawer comes up short at close."),
     prefRow("summary", "Nightly recap", "How many tasks got checked off in the shift day that just ended, what's overdue, and any drawer that came up short.",
       h("label",{class:"lbl", for:"pfRecap"}, "Send at", timeInput("pfRecap","summary_time"))),
@@ -979,6 +983,7 @@ function tonightCard(all){
   }
   /* cash-out at close */
   rows.push(...cashBoardRows(today));
+  const ar = alertsBoardRow(); if (ar) rows.unshift(ar);
   /* managers: the next order deadline */
   if (isAdmin() && D().suppliers.length){
     const nx = suppliersByDeadline().find(x=>x.d && !x.ordered);
@@ -1003,6 +1008,7 @@ function viewOverview(){
   const out = [], d = D(), admin = isAdmin();
   const all = visibleTasks();
   out.push(tonightCard(all));
+  out.push(...alertsSection());
 
   out.push(h("div",{class:"sec-head tasks-head"}, h("h2",{class:"sectitle", text:"Tasks"}),
     admin && canWrite() && !S.addingTask ? h("button",{type:"button", class:"btn small", onclick:()=>{ S.addingTask = true; render(); $("newTask")?.focus(); }},"Add task") : null));
@@ -1044,7 +1050,7 @@ function viewOverview(){
 function activitySection(){
   const admin = isAdmin();
   const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked", shift_posted:" asked for coverage on %", shift_taken:" is covering %", skipped:" called off %", unskipped:" brought back %",
-                inquiry:" asked about a party: %", held:" put a hold on %", booked:" booked %", declined:" declined %", cancelled:" cancelled %", reopened:" reopened %", deposit:" took the deposit for %", cashout:" cashed out %", recount:" changed the cash-out for %", replenished:" replenished %", unreplenished:" un-marked %"};
+                inquiry:" asked about a party: %", held:" put a hold on %", booked:" booked %", declined:" declined %", cancelled:" cancelled %", reopened:" reopened %", deposit:" took the deposit for %", cashout:" cashed out %", recount:" changed the cash-out for %", replenished:" replenished %", unreplenished:" un-marked %", alerted:" alerted %", handled:" handled %"};
   /* staff only see activity from their side of the pub, plus inventory counts */
   const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); ok.add("Tasks"); ok.add("Events"); return place=>ok.has(place); })();
   const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place==="Schedule" ? "Shifts" : (l.place||"")}));   // the Schedule tab is called Shifts now
@@ -2395,6 +2401,75 @@ function openDepositSetting(){
   v.focus();
 }
 
+/* ---------- notify a manager ----------
+   Anyone can send the managers a heads-up: front or back of house, and optionally one manager by name.
+   Managers see open alerts at the top of the Tasks tab and mark them handled; the sender sees when it's handled. */
+const staffAlerts = () => D().alerts || [];
+const openAlerts = () => staffAlerts().filter(a=>!a.handled_at);
+const AREAS = {foh:["Front of house","Bar, floor, guests"], boh:["Back of house","Kitchen, dish, walk-in"]};
+function scrollToAlerts(){ requestAnimationFrame(()=>{ const el = $("staffAlerts"); if (el) el.scrollIntoView({block:"center", behavior:"smooth"}); }); }
+function alertsBoardRow(){
+  if (!isAdmin()) return null;
+  const open = openAlerts(); if (!open.length) return null;
+  const mine = open.filter(a=>a.to_staff===me().id).length;
+  return boardRow("tn-alert", open.length===1 ? "Alert from "+open[0].from_name.split(/\s+/)[0] : open.length+" staff alerts",
+    mine ? "For you" : "See it", ()=>{ go("overview"); scrollToAlerts(); }, true);
+}
+function alertRow(a, forMgr){
+  const area = AREAS[a.area] || ["",""];
+  return h("div",{class:"alertrow"+(a.handled_at ? " done" : "")},
+    h("div",{class:"line"},
+      h("span",{class:"tag "+a.area, text:a.area==="foh" ? "FOH" : "BOH"}),
+      forMgr && a.to_staff===me().id ? h("span",{class:"tag warn", text:"For you"}) : null,
+      h("span",{class:"hint", text: forMgr ? a.from_name+" · "+when(a.at)+(a.to_name && a.to_staff!==me().id ? " · for "+a.to_name : "")
+                                           : "To "+(a.to_name || "any manager")+" · "+when(a.at)})),
+    h("p",{class:"alerttext", text:a.text}),
+    forMgr ? (canWrite() && !a.handled_at ? h("button",{type:"button", class:"btn small", onclick:()=>act("api_handle_alert",{p_id:a.id, p_done:true}, "Marked handled")}, "Handled") : null)
+           : h("span",{class:"tag "+(a.handled_at ? "ok" : "plain"), text: a.handled_at ? "Handled by "+(a.handled_by_name||"a manager") : "Waiting for a manager"}));
+}
+function alertsSection(){
+  const admin = isAdmin(), out = [];
+  if (admin){
+    const open = openAlerts().sort((a,b)=>Number(b.to_staff===me().id)-Number(a.to_staff===me().id) || String(a.at).localeCompare(String(b.at)));
+    if (open.length) out.push(h("section",{class:"card stack alertcard", id:"staffAlerts"},
+      h("div",{class:"row"}, h("h2",{text:"Alerts from staff"}), h("span",{class:"tag warn", text:String(open.length)})),
+      open.map(a=>alertRow(a, true))));
+  }
+  out.push(h("button",{type:"button", class:"btn ghost notifybtn", disabled:!canWrite(), onclick:openNotifyManager}, icon("hand"), h("span",{text:"Notify a manager"})));
+  if (!admin){
+    const mine = staffAlerts().filter(a=>a.from_id===me().id).slice(0, 3);
+    if (mine.length) out.push(h("div",{class:"stack myalerts", id:"staffAlerts"}, mine.map(a=>alertRow(a, false))));
+  }
+  return out;
+}
+function openNotifyManager(){
+  const m = me(), secs = new Set((m.roles||[]).map(id=>(roleById(id)||{}).section));
+  let area = secs.has("foh") && !secs.has("boh") ? "foh" : secs.has("boh") && !secs.has("foh") ? "boh" : null;
+  const mgrs = D().staff.filter(s=>isManagerStaff(s) && s.has_login && s.id!==m.id).sort((a,b)=>a.name.localeCompare(b.name));
+  const who = h("select",{id:"nmWho"}, h("option",{value:""},"Any manager"), mgrs.map(s=>h("option",{value:s.id}, s.name)));
+  const text = h("textarea",{id:"nmText", rows:"3", maxlength:"600", placeholder:"e.g. The walk-in is reading 45°, or a guest is asking for a manager"});
+  const err = h("p",{class:"loginerr", role:"alert"});
+  const pick = val => h("label",{class:"yn"}, h("input",{type:"radio", name:"nmArea", value:val, checked:area===val, onchange:()=>{ area = val; err.textContent = ""; }}),
+    h("span",{}, h("b",{text:AREAS[val][0]}), h("small",{text:AREAS[val][1]})));
+  openSheet(
+    h("h2",{text:"Notify a manager"}),
+    h("p",{class:"hint", style:"margin:-4px 0 0", text:"For anything a manager should know about. Can’t make a shift? Use Ask for coverage on the Shifts tab instead."}),
+    h("fieldset",{class:"choices"}, h("legend",{class:"lbl", text:"What’s it about?"}), h("div",{class:"ynpick"}, pick("foh"), pick("boh"))),
+    h("label",{class:"lbl", for:"nmWho"}, "Which manager? (optional)", who),
+    h("label",{class:"lbl", for:"nmText"}, "What’s going on?", text),
+    err,
+    h("button",{type:"button", class:"btn", onclick:async ev=>{
+      if (!area){ err.textContent = "Pick front of house or back of house."; return; }
+      if (!text.value.trim()){ err.textContent = "Say what’s going on."; text.focus(); return; }
+      ev.target.disabled = true; err.textContent = "";
+      try {
+        await call("api_notify_manager",{p_area:area, p_to:who.value||null, p_text:text.value});
+        play("ok"); closeSheet(); toast(who.value ? "Sent to "+staffName(who.value) : "Sent to the managers"); await refresh();
+      } catch(x){ if (x.code==="not_logged_in") return logOut("You've been logged out. Enter your number again."); err.textContent = errMsg(x); ev.target.disabled = false; }
+    }}, "Send alert"),
+    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
+}
+
 /* ---------- cash-out at close ----------
    Toast counts the drawer and prints a Closed Drawer Report. If its Expected deposit has a minus sign (like −$6.22),
    the drawer is short by that much and a manager has to put it back. At close the bartender only says whether the
@@ -2738,8 +2813,9 @@ document.addEventListener("touchmove", e=>{ if (e.touches.length > 1 || (e.scale
   if (location.hash==="#schedule") S.view = "schedule";     // opened from a shift swap notification
   if (location.hash==="#events") S.view = "events";
   if (location.hash==="#cash") S.view = "cash";   // a drawer came up short
+  if (location.hash==="#alerts"){ S.view = "overview"; setTimeout(scrollToAlerts, 1500); }   // an alert from staff
   render();
   if (S.session && configured()) refresh();
   checkLatest(true);
 })();
-window.addEventListener("hashchange", ()=>{ if (!S.session) return; if (location.hash==="#inventory") go("inventory"); if (location.hash==="#schedule") go("schedule"); if (location.hash==="#events") go("events"); if (location.hash==="#cash") go("cash"); });
+window.addEventListener("hashchange", ()=>{ if (!S.session) return; if (location.hash==="#inventory") go("inventory"); if (location.hash==="#schedule") go("schedule"); if (location.hash==="#events") go("events"); if (location.hash==="#cash") go("cash"); if (location.hash==="#alerts"){ go("overview"); scrollToAlerts(); } });
