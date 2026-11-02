@@ -961,3 +961,17 @@ select.picked{display:none !important}
 .alerttext{margin:0;font-size:16px;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere}
 .alertrow.done{opacity:.8}
 .myalerts{gap:8px}
+
+/* v46: daily cash (Aidan, Tom and Mandy only) */
+.dcash{gap:12px;border-color:var(--gold-deep)}
+.dcash>.row h2{margin:0;font-family:var(--serif);font-size:22px}
+.dcpriv{display:flex;align-items:center;gap:6px;margin:0}
+.dcpriv svg{width:16px;height:16px;flex:none;color:var(--gold-deep)}
+.dclatest{display:flex;flex-direction:column;gap:10px;width:100%;text-align:left;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--paper);color:inherit;font:inherit;cursor:pointer}
+.dclatest .cstat{background:var(--card)}
+.dcpays{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.dcpays li{display:flex;justify-content:space-between;gap:12px;padding:6px 2px;border-top:1px dashed var(--line);font-size:15px}
+.dcpays li:first-child{border-top:0}
+.dcrow{display:grid;grid-template-columns:1fr 110px 40px;gap:8px;align-items:center}
+.dcrow input{min-width:0}
+.dcdel{height:40px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--muted);font-size:20px;line-height:1;cursor:pointer}

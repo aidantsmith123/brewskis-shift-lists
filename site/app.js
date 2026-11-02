@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 45;
+const APP_VERSION = 46;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -79,6 +79,9 @@ function errMsg(e){
     foh_only:"Only front-of-house staff and managers can cash out.",
     need_amount:"Enter how much it's short.",
     pick_area:"Pick front of house or back of house.",
+    not_allowed:"Only Aidan, Tom and Mandy can do that.",
+    need_numbers:"Enter the cash sales and the cash left over.",
+    need_payee:"Add who each payout went to.",
     too_many:"That's a lot of alerts in a few minutes. Try again shortly.",
     name_taken:"There's already a drawer with that name."
   })[c] || "Couldn't save. Try again in a moment.";
@@ -294,7 +297,7 @@ function when(iso){
   return d.toDateString()===now.toDateString() ? t : d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+", "+t;
 }
 function initials(n){ return (n||"?").trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase() || "?"; }
-const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], shifts:[], covers:[], events:[], parties:[], settings:{}, drawers:[], cashouts:[], alerts:[], log:[], me:null};
+const D = () => S.data || {roles:[], staff:[], tasks:[], invcats:[], items:[], counts:[], suppliers:[], shifts:[], covers:[], events:[], parties:[], settings:{}, drawers:[], cashouts:[], alerts:[], daily_cash:[], log:[], me:null};
 const me = () => D().me;
 const isAdmin = () => !!(me() && me().manager);
 const canWrite = () => !!me() && !S.offline;
@@ -768,6 +771,7 @@ function viewNotify(){
           [[1,"1 hour before"],[2,"2 hours before"],[4,"4 hours before"],[24,"1 day before"]].map(([v,l])=>h("option",{value:v, selected:Number(p.lead_hours)===v}, l))))),
     prefRow("overdue", "Overdue tasks", "When a task passes its due date or due time without being checked off. One alert per task."),
     prefRow("out", "Out of stock", "When someone counts an item at 0."),
+    canCashBook() ? prefRow("cashbook", "Daily cash", "When one of the others enters a day’s cash numbers.") : null,
     prefRow("staff", "Alerts from staff", "When someone taps Notify a manager. One sent to you by name comes through even during quiet hours."),
     prefRow("cash", "Short drawers", "When a drawer comes up short at close."),
     prefRow("summary", "Nightly recap", "How many tasks got checked off in the shift day that just ended, what's overdue, and any drawer that came up short.",
@@ -946,6 +950,7 @@ const ICONS = {
   clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   cal:'<rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M8 2.5v4M16 2.5v4M3 10h18"/>',
   box:'<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+  lock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   hand:'<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>'
 };
 function icon(name){ const s = document.createElementNS("http://www.w3.org/2000/svg","svg"); s.setAttribute("viewBox","0 0 24 24"); s.setAttribute("aria-hidden","true");
@@ -985,6 +990,7 @@ function tonightCard(all){
   /* cash-out at close */
   rows.push(...cashBoardRows(today));
   const ar = alertsBoardRow(); if (ar) rows.unshift(ar);
+  const dr = dailyCashBoardRow(today); if (dr) rows.push(dr);
   /* managers: the next order deadline */
   if (isAdmin() && D().suppliers.length){
     const nx = suppliersByDeadline().find(x=>x.d && !x.ordered);
@@ -2474,6 +2480,119 @@ function openNotifyManager(){
     h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
 }
 
+/* ---------- daily cash ----------
+   The day's cash sales, payouts and the cash left over (counted). Only Aidan, Tom and Mandy: the server sends it to
+   nobody else and refuses anyone else's changes, so me().cash_book here only decides what to draw. */
+const canCashBook = () => !!(me() && me().cash_book);
+const dailyCash = () => D().daily_cash || [];
+const dcFor = day => dailyCash().find(d=>d.day===day);
+const signed = n => (Number(n) < 0 ? "−" : "")+cash(n);
+const dcPayees = () => { const seen = new Map(); dailyCash().forEach(d=>(d.payouts||[]).forEach(p=>{ const k = (p.who||"").trim(); if (k && !seen.has(k.toLowerCase())) seen.set(k.toLowerCase(), k); })); return [...seen.values()]; };
+function scrollToDailyCash(){ requestAnimationFrame(()=>{ const el = $("dailyCash"); if (el) el.scrollIntoView({block:"start", behavior:"smooth"}); }); }
+function dailyCashBoardRow(today){
+  if (!canCashBook()) return null;
+  const y = addDays(today, -1);
+  if (dcFor(y)) return null;
+  return boardRow("tn-dcash", "Daily cash", "Enter "+weekdayName(y, "short")+"’s numbers", ()=>{ go("cash"); openDailyCashForm(y); });
+}
+function dcStats(d){
+  return h("div",{class:"cashstats"},
+    h("div",{class:"cstat"}, h("small",{text:"Cash sales"}), h("b",{text:cash(d.cash_sales)})),
+    h("div",{class:"cstat"}, h("small",{text:"Payouts"}), h("b",{text:cash(d.payouts_total)})),
+    h("div",{class:"cstat"+(Number(d.left_over) < 0 ? " neg" : "")}, h("small",{text:"Left over"}), h("b",{text:signed(d.left_over)})));
+}
+function dailyCashCard(){
+  const list = dailyCash(), latest = list[0];
+  const sec = h("section",{class:"card stack dcash", id:"dailyCash"},
+    h("div",{class:"row"}, h("h2",{text:"Daily cash"}),
+      canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>openDailyCashForm(null)},"+ Enter a day") : null),
+    h("p",{class:"hint dcpriv"}, icon("lock"), h("span",{text:"Only Aidan, Tom and Mandy can see this."})));
+  if (!latest){ sec.append(h("p",{class:"hint", style:"margin:0", text:"Enter each day’s cash sales, payouts and the cash left over. The other two get a notification with the numbers."})); return sec; }
+  sec.append(h("button",{type:"button", class:"dclatest", onclick:()=>openDailyCashForm(latest.day)},
+    h("div",{class:"row"}, h("b",{text:longDay(latest.day)}), h("span",{class:"hint", text:(latest.by_name||"")+" · "+when(latest.at)})),
+    dcStats(latest),
+    (latest.payouts||[]).length ? h("ul",{class:"dcpays"}, latest.payouts.map(p=>h("li",{}, h("span",{text:p.who}), h("b",{text:cash(p.amount)})))) : null,
+    latest.note ? h("p",{class:"hint", style:"margin:0", text:"“"+latest.note+"”"}) : null));
+  const rest = list.slice(1, 15);
+  if (rest.length) sec.append(h("div",{class:"stack", style:"gap:6px"}, h("b",{class:"subhead", text:"Earlier days"}),
+    rest.map(d=>h("button",{type:"button", class:"cashrow", onclick:()=>openDailyCashForm(d.day)},
+      h("span",{class:"t"}, h("b",{text:shortDay(d.day)}),
+        h("span",{class:"hint", text:"Sales "+cash(d.cash_sales)+" · Payouts "+cash(d.payouts_total)+" · Left "+signed(d.left_over)}))))));
+  sec.append(h("button",{type:"button", class:"btn ghost small", style:"align-self:flex-start", onclick:downloadDailyCash},"Download CSV"));
+  return sec;
+}
+async function downloadDailyCash(){
+  const q = v => { const s = String(v==null ? "" : v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+  const rows = [["Date","Cash sales","Payouts total","Payouts","Left over","Note","Entered by"]];
+  dailyCash().slice().sort((a,b)=>a.day.localeCompare(b.day)).forEach(d=>rows.push([d.day, d.cash_sales, d.payouts_total,
+    (d.payouts||[]).map(p=>p.who+" "+p.amount).join("; "), d.left_over, d.note, d.by_name]));
+  const name = "brewskis-daily-cash-"+shiftDay()+".csv", file = new File([rows.map(r=>r.map(q).join(",")).join("\n")], name, {type:"text/csv"});
+  try { if (navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:"Daily cash"}); return; } } catch(e){ if (e && e.name==="AbortError") return; }
+  const a = h("a",{href:URL.createObjectURL(file), download:name}); document.body.append(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+function openDailyCashForm(day){
+  if (!canCashBook()) return;
+  const today = shiftDay();
+  day = day || (dcFor(addDays(today,-1)) ? today : addDays(today,-1));
+  const prev = dcFor(day);
+  const num = (id, val, extra) => h("input", Object.assign({type:"number", id, min:"0", step:"0.01", inputmode:"decimal", value: val==null ? "" : val, autocomplete:"off"}, extra||{}));
+  const date = h("input",{type:"date", id:"dcDay", value:day, max:today});
+  const sales = num("dcSales", prev ? prev.cash_sales : null, {placeholder:"0.00"});
+  const left = num("dcLeft", prev ? prev.left_over : null, {placeholder:"0.00", min:null});
+  const note = h("textarea",{id:"dcNote", rows:"2", maxlength:"1000", placeholder:"Optional"}, prev ? prev.note : "");
+  const rowsBox = h("div",{class:"stack dcrows", style:"gap:8px"});
+  const total = h("b",{}), dup = h("p",{class:"hint warnline", role:"status"});
+  const sync = () => {
+    let t = 0; rowsBox.querySelectorAll(".dcamt").forEach(i=>{ const v = parseFloat(i.value); if (!isNaN(v) && v > 0) t += v; });
+    total.textContent = cash(t);
+    const other = date.value && date.value!==day ? dcFor(date.value) : null;
+    dup.textContent = other ? "There’s already an entry for "+shortDay(date.value)+". Saving replaces it." : ""; dup.hidden = !other;
+  };
+  const addRow = (p) => {
+    const who = h("input",{type:"text", class:"dcwho", maxlength:"60", placeholder:"Who or what", list:"dcPayees", value:p ? p.who : "", "aria-label":"Paid to"});
+    const amt = h("input",{type:"number", class:"dcamt", min:"0", step:"0.01", inputmode:"decimal", placeholder:"0.00", value:p ? p.amount : "", "aria-label":"Amount", oninput:sync});
+    const row = h("div",{class:"dcrow"}, who, amt, h("button",{type:"button", class:"dcdel", "aria-label":"Remove this payout", onclick:()=>{ row.remove(); if (!rowsBox.children.length) addRow(); sync(); }}, "×"));
+    rowsBox.append(row); return who;
+  };
+  (prev && prev.payouts && prev.payouts.length ? prev.payouts : [null]).forEach(p=>addRow(p));
+  date.addEventListener("change", sync); sync();
+  const err = h("p",{class:"loginerr", role:"alert"});
+  openSheet(
+    h("h2",{text:prev ? "Daily cash · "+shortDay(day) : "Enter daily cash"}),
+    h("p",{class:"hint dcpriv", style:"margin:-4px 0 0"}, icon("lock"), h("span",{text:"Only Aidan, Tom and Mandy can see this."})),
+    h("datalist",{id:"dcPayees"}, dcPayees().map(n=>h("option",{value:n}))),
+    h("div",{class:"inline"}, h("label",{class:"lbl", for:"dcDay", style:"flex:1"}, "Day", date), h("label",{class:"lbl", for:"dcSales", style:"flex:1"}, "Cash sales ($)", sales)),
+    dup,
+    h("fieldset",{class:"choices"}, h("legend",{class:"lbl", text:"Payouts"}), rowsBox,
+      h("div",{class:"row", style:"margin-top:8px"},
+        h("button",{type:"button", class:"linkbtn", onclick:()=>{ addRow().focus(); }},"+ Add payout"),
+        h("span",{class:"hint"}, "Total ", total))),
+    h("label",{class:"lbl", for:"dcLeft"}, "Cash left over ($)", left),
+    h("p",{class:"hint", style:"margin:-6px 0 0", text:"What you counted after the payouts."}),
+    h("label",{class:"lbl", for:"dcNote"}, "Note", note),
+    err,
+    h("button",{type:"button", class:"btn", onclick:async ev=>{
+      if (!date.value){ err.textContent = "Pick the day."; return; }
+      if (sales.value.trim()===""){ err.textContent = "Enter the cash sales."; sales.focus(); return; }
+      if (left.value.trim()===""){ err.textContent = "Enter the cash left over."; left.focus(); return; }
+      const payouts = [...rowsBox.querySelectorAll(".dcrow")].map(r=>({who:r.querySelector(".dcwho").value.trim(), amount:r.querySelector(".dcamt").value.trim()}))
+        .filter(p=>p.who || p.amount);
+      if (payouts.some(p=>!p.who)){ err.textContent = "Add who each payout went to."; return; }
+      if (payouts.some(p=>!(Number(p.amount) > 0))){ err.textContent = "Enter an amount for each payout."; return; }
+      ev.target.disabled = true; err.textContent = "";
+      try {
+        await call("api_daily_cash_save",{p_day:date.value, p_data:{cash_sales:sales.value, left_over:left.value, note:note.value, payouts}});
+        if (prev && date.value!==day) await call("api_daily_cash_delete",{p_day:day});   // moved to another day
+        play("ok"); closeSheet(); toast("Saved. The others get a notification."); await refresh(); scrollToDailyCash();
+      } catch(x){ if (x.code==="not_logged_in") return logOut("You've been logged out. Enter your number again."); err.textContent = errMsg(x); ev.target.disabled = false; }
+    }}, prev ? "Save changes" : "Save and send"),
+    prev ? h("button",{type:"button", class:"linkbtn warn", style:"align-self:center", onclick:ev=>{
+      if (ev.target.dataset.armed){ closeSheet(); act("api_daily_cash_delete",{p_day:day}, "Deleted "+shortDay(day)); }
+      else { ev.target.dataset.armed = "1"; ev.target.textContent = "Tap again to delete this day"; } }},"Delete this day") : null,
+    h("button",{type:"button", class:"btn ghost", onclick:closeSheet},"Cancel"));
+  if (!prev) sales.focus();
+}
+
 /* ---------- cash-out at close ----------
    Toast counts the drawer and prints a Closed Drawer Report. If its Expected deposit has a minus sign (like −$6.22),
    the drawer is short by that much and a manager has to put it back. At close the bartender only says whether the
@@ -2616,6 +2735,7 @@ function viewCash(){
   if (!showCashTab()){ S.view = "overview"; return viewOverview(); }
   const admin = isAdmin(), today = shiftDay(), ds = drawers(), out = [];
   out.push(h("div",{class:"sec-head"}, h("h2",{class:"sectitle", text:"Drawers"})));
+  if (canCashBook()) out.push(dailyCashCard());
   if (!ds.length){
     out.push(admin
       ? emptyCard("Set up your drawers", "Add each cash drawer that gets closed out at night, using the name on Toast's report. Then whoever closes says here whether it came up short.",
@@ -2817,9 +2937,10 @@ document.addEventListener("touchmove", e=>{ if (e.touches.length > 1 || (e.scale
   if (location.hash==="#schedule") S.view = "schedule";     // opened from a shift swap notification
   if (location.hash==="#events") S.view = "events";
   if (location.hash==="#cash") S.view = "cash";   // a drawer came up short
+  if (location.hash==="#dailycash"){ S.view = "cash"; setTimeout(scrollToDailyCash, 1500); }
   if (location.hash==="#alerts"){ S.view = "overview"; setTimeout(scrollToAlerts, 1500); }   // an alert from staff
   render();
   if (S.session && configured()) refresh();
   checkLatest(true);
 })();
-window.addEventListener("hashchange", ()=>{ if (!S.session) return; if (location.hash==="#inventory") go("inventory"); if (location.hash==="#schedule") go("schedule"); if (location.hash==="#events") go("events"); if (location.hash==="#cash") go("cash"); if (location.hash==="#alerts"){ go("overview"); scrollToAlerts(); } });
+window.addEventListener("hashchange", ()=>{ if (!S.session) return; if (location.hash==="#inventory") go("inventory"); if (location.hash==="#schedule") go("schedule"); if (location.hash==="#events") go("events"); if (location.hash==="#cash") go("cash"); if (location.hash==="#dailycash"){ go("cash"); scrollToDailyCash(); } if (location.hash==="#alerts"){ go("overview"); scrollToAlerts(); } });

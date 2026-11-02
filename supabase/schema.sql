@@ -222,13 +222,16 @@ set search_path = public, extensions as $$ delete from sessions where token = p_
 -- ---------- everything the app shows ----------
 create or replace function api_state(p_token uuid) returns json language plpgsql
 set search_path = public, extensions as $$
-declare me staff; mgr boolean;
+declare me staff; mgr boolean; cb boolean;
 begin
   me := _me(p_token);
   mgr := _is_manager(me.roles);
+  cb := _can_cash_book(me.id);
   delete from log where at < now() - interval '60 days';
   return json_build_object(
-    'me', json_build_object('id', me.id, 'name', me.name, 'roles', me.roles, 'manager', mgr),
+    'me', json_build_object('id', me.id, 'name', me.name, 'roles', me.roles, 'manager', mgr, 'cash_book', cb),
+    -- daily cash: only for Aidan, Tom and Mandy (cash_book_access)
+    'daily_cash', case when cb then coalesce((select json_agg(dc order by dc.day desc) from daily_cash dc where dc.day >= _shift_day() - 120), '[]') else '[]' end,
     'shift_day', _shift_day(),
     'server_time', now(),
     'roles', coalesce((select json_agg(r order by r.section, r.sort, r.name) from roles r), '[]'),
@@ -632,11 +635,11 @@ $$;
 
 -- Settings with defaults filled in and junk thrown out.
 create or replace function _push_prefs(p jsonb) returns jsonb language plpgsql immutable as $$
-declare d jsonb := '{"orders":true,"lead_hours":2,"overdue":true,"out":true,"summary":true,"swaps":true,"coverage":true,"tasks":true,"cash":true,"staff":true,"summary_time":"09:00","quiet":true,"quiet_start":"00:00","quiet_end":"08:00"}';
+declare d jsonb := '{"orders":true,"lead_hours":2,"overdue":true,"out":true,"summary":true,"swaps":true,"coverage":true,"tasks":true,"cash":true,"staff":true,"cashbook":true,"summary_time":"09:00","quiet":true,"quiet_start":"00:00","quiet_end":"08:00"}';
         r jsonb := d; k text;
 begin
   p := coalesce(p, '{}');
-  foreach k in array array['orders','overdue','out','summary','swaps','coverage','tasks','cash','staff','quiet'] loop
+  foreach k in array array['orders','overdue','out','summary','swaps','coverage','tasks','cash','staff','cashbook','quiet'] loop
     if jsonb_typeof(p->k) = 'boolean' then r := jsonb_set(r, array[k], p->k); end if;
   end loop;
   if jsonb_typeof(p->'lead_hours') = 'number' then r := jsonb_set(r, '{lead_hours}', to_jsonb(least(greatest((p->>'lead_hours')::numeric::int, 1), 48))); end if;
@@ -926,6 +929,24 @@ begin
           'body', array_to_string(nt[1:3], '. ') || case when array_length(nt,1) > 3 then '…' else '' end,
           'url', case when nt_party = array_length(nt, 1) then './#events' else './' end, 'tag', 'task');
       end if;
+    end if;
+
+    -- 11. daily cash, to the others on the cash book list (Aidan, Tom, Mandy) only
+    if _can_cash_book(sub.staff_id) and (p->>'cashbook')::boolean and not quiet then
+      for r in select dc.* from daily_cash dc
+                where dc.at > p_now - interval '24 hours' and dc.at > sub.created_at - interval '1 hour'
+                  and dc.by_id is distinct from sub.staff_id order by dc.day loop
+        k := 'dcash:' || endpoint_key || ':' || r.day || ':' || r.edits;
+        insert into push_sent(key) values (k) on conflict do nothing; get diagnostics rc = row_count;
+        continue when rc = 0;
+        out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
+          'title', case when r.edits > 0 then 'Daily cash updated · ' else 'Daily cash · ' end || to_char(r.day, 'Dy Mon FMDD'),
+          'body', 'Sales ' || _money(r.cash_sales) || ' · Payouts ' || _money(r.payouts_total) ||
+                  ' · Left over ' || case when r.left_over < 0 then '−' else '' end || _money(r.left_over) ||
+                  coalesce(' (' || (select string_agg((x->>'who') || ' ' || _money((x->>'amount')::numeric), ', ') from jsonb_array_elements(r.payouts) x) || ')', '') ||
+                  ' · ' || coalesce(r.by_name, ''),
+          'url', './#dailycash', 'tag', 'dcash');
+      end loop;
     end if;
 
     -- 10. alerts from staff: to this manager by name (even in quiet hours), or to any manager
@@ -2110,6 +2131,87 @@ begin
   update manager_alerts set handled_at = case when p_done then now() end, handled_by_name = case when p_done then me.name end
    where id = p_id and (handled_at is null) = coalesce(p_done, true) returning * into a;
   if found then perform _log(me, case when p_done then 'handled' else 'reopened' end, a.from_name || '’s alert: ' || left(a.text, 120), 'Alerts'); end if;
+end $$;
+
+-- ---------- daily cash (added Nov 2026) ----------
+-- The day's cash sales, the cash paid out (to whom, how much) and the cash left over, counted by hand.
+-- ONLY the people listed in cash_book_access can see or change it: Aidan, Tom and Mandy. Being a manager is not enough.
+-- That list can only be changed here in the SQL editor; nothing in the app can add anyone to it.
+-- Saving a day notifies the others on the list. Nothing about it goes in the activity log.
+create table if not exists cash_book_access (staff_id text primary key references staff(id) on delete cascade);
+create table if not exists daily_cash (
+  day date primary key,
+  cash_sales numeric not null,
+  payouts jsonb not null default '[]',        -- [{"who":"Mark","amount":551}, ...]
+  payouts_total numeric not null default 0,
+  left_over numeric not null,
+  note text not null default '',
+  by_id text, by_name text,
+  at timestamptz not null default now(),
+  first_at timestamptz not null default now(),
+  edits int not null default 0
+);
+do $$
+declare t text;
+begin
+  foreach t in array array['cash_book_access','daily_cash'] loop
+    execute format('alter table %I enable row level security', t);
+    execute format('revoke all on table %I from public', t);
+    if exists (select 1 from pg_roles where rolname='anon') then execute format('revoke all on table %I from anon', t); end if;
+    if exists (select 1 from pg_roles where rolname='authenticated') then execute format('revoke all on table %I from authenticated', t); end if;
+  end loop;
+end $$;
+insert into cash_book_access (staff_id) select id from staff where name in ('Aidan','Tom','Mandy') on conflict do nothing;
+
+create or replace function _can_cash_book(p_id text) returns boolean language sql stable
+set search_path = public, extensions as $$
+  select exists (select 1 from cash_book_access where staff_id = p_id)
+$$;
+create or replace function _cash_booker(p_token uuid) returns staff language plpgsql stable
+set search_path = public, extensions as $$
+declare s staff := _me(p_token);
+begin
+  if not _can_cash_book(s.id) then raise exception 'not_allowed'; end if;
+  return s;
+end $$;
+
+-- Save a day (p_data: cash_sales, payouts [{who, amount}], left_over, note). Saving the same day again replaces it.
+create or replace function api_daily_cash_save(p_token uuid, p_day date, p_data jsonb) returns json language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _cash_booker(p_token); d daily_cash; sales numeric; lo numeric; p jsonb; who text; amt numeric;
+        pays jsonb := '[]'; total numeric := 0;
+begin
+  if p_day is null or p_day > _shift_day() or p_day < _shift_day() - 400 then raise exception 'bad_time'; end if;
+  begin
+    sales := round(nullif(trim(coalesce(p_data->>'cash_sales','')), '')::numeric, 2);
+    lo := round(nullif(trim(coalesce(p_data->>'left_over','')), '')::numeric, 2);
+  exception when others then raise exception 'bad_amount'; end;
+  if sales is null or lo is null then raise exception 'need_numbers'; end if;
+  if sales < 0 or sales > 1000000 or lo < -1000000 or lo > 1000000 then raise exception 'bad_amount'; end if;
+  if jsonb_typeof(coalesce(p_data->'payouts','[]')) <> 'array' or jsonb_array_length(coalesce(p_data->'payouts','[]')) > 40 then raise exception 'bad_amount'; end if;
+  for p in select * from jsonb_array_elements(coalesce(p_data->'payouts','[]')) loop
+    who := left(trim(coalesce(p->>'who','')), 60);
+    begin amt := round(nullif(trim(coalesce(p->>'amount','')), '')::numeric, 2); exception when others then raise exception 'bad_amount'; end;
+    continue when who = '' and amt is null;
+    if who = '' then raise exception 'need_payee'; end if;
+    if amt is null or amt <= 0 or amt > 1000000 then raise exception 'bad_amount'; end if;
+    pays := pays || jsonb_build_object('who', who, 'amount', amt);
+    total := total + amt;
+  end loop;
+  insert into daily_cash (day, cash_sales, payouts, payouts_total, left_over, note, by_id, by_name)
+  values (p_day, sales, pays, total, lo, left(trim(coalesce(p_data->>'note','')), 1000), me.id, me.name)
+  on conflict (day) do update set cash_sales = excluded.cash_sales, payouts = excluded.payouts, payouts_total = excluded.payouts_total,
+     left_over = excluded.left_over, note = excluded.note, by_id = excluded.by_id, by_name = excluded.by_name, at = now(), edits = daily_cash.edits + 1
+  returning * into d;
+  perform _push_kick();
+  return row_to_json(d);
+end $$;
+
+create or replace function api_daily_cash_delete(p_token uuid, p_day date) returns void language plpgsql
+set search_path = public, extensions as $$
+declare me staff := _cash_booker(p_token);
+begin
+  delete from daily_cash where day = p_day;
 end $$;
 
 -- ---------- who may call what ----------
