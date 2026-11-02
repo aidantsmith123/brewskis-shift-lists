@@ -3,7 +3,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 44;
+const APP_VERSION = 45;
 const APP_DATE = "2026-11-01";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -936,7 +936,8 @@ function visibleSections(){
 const canSeeRole = r => !!r && visibleSections().has(r.section);
 
 /* tasks this person sees: ones for everyone, plus ones for roles on their side of the pub */
-const visibleTasks = () => D().tasks.filter(t=>!t.role_id || canSeeRole(roleById(t.role_id)));
+/* a task assigned to one person shows only for them (and managers); the rest go by role */
+const visibleTasks = () => D().tasks.filter(t=>t.assignee ? (t.assignee===me().id || isAdmin()) : (!t.role_id || canSeeRole(roleById(t.role_id))));
 const isMineTask = t => { const m = me(); return t.assignee ? t.assignee===m.id : (!t.role_id || (m.roles||[]).includes(t.role_id)); };
 const taskSort = (a,b)=>Number(!!b.important)-Number(!!a.important) || (taskDeadline(a)||Infinity)-(taskDeadline(b)||Infinity) || a.text.localeCompare(b.text);
 
@@ -1053,7 +1054,10 @@ function activitySection(){
                 inquiry:" asked about a party: %", held:" put a hold on %", booked:" booked %", declined:" declined %", cancelled:" cancelled %", reopened:" reopened %", deposit:" took the deposit for %", cashout:" cashed out %", recount:" changed the cash-out for %", replenished:" replenished %", unreplenished:" un-marked %", alerted:" alerted %", handled:" handled %"};
   /* staff only see activity from their side of the pub, plus inventory counts */
   const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); ok.add("Tasks"); ok.add("Events"); return place=>ok.has(place); })();
-  const ev = D().log.filter(l=>placeOk(l.place||"")).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place==="Schedule" ? "Shifts" : (l.place||"")}));   // the Schedule tab is called Shifts now
+  /* staff don't see activity on tasks assigned to someone else */
+  const othersTasks = admin ? new Set() : new Set(D().tasks.filter(t=>t.assignee && t.assignee!==me().id).map(t=>t.text));
+  const TASK_KINDS = new Set(["added","edited","removed","done","undone"]);
+  const ev = D().log.filter(l=>placeOk(l.place||"") && !(TASK_KINDS.has(l.kind) && othersTasks.has(l.text))).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place==="Schedule" ? "Shifts" : (l.place||"")}));   // the Schedule tab is called Shifts now
   let shown = ev;
   const q = admin ? S.actQuery.trim().toLowerCase() : "";
   if (admin && S.actRange!=="all"){ const cut = S.actRange==="today" ? shiftStartISO() : new Date(Date.now()-7*86400e3).toISOString(); shown = shown.filter(e=>new Date(e.at).toISOString()>=cut); }

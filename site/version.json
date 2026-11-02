@@ -1,5 +1,5 @@
 {
-  "version": 44,
+  "version": 45,
   "date": "2026-11-02",
-  "notes": "Notify a manager: a button on the Tasks tab sends the managers an alert about anything, front or back of house, to one manager or all. Managers mark it handled."
+  "notes": "A task assigned to one person now shows only on their list (managers still see every task)."
 }
