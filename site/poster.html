@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JT Brewski's staff app · sign-up poster</title>
+<link rel="icon" href="icons/favicon-32.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,600&family=Inter:wght@400;600;700&display=swap">
+<style>
+  :root{--paper:#F3EBDD;--card:#FBF6EC;--ink:#2A1A12;--muted:#6E5A4A;--ox:#7C2128;--gold:#E2A93B;--board:#1F2B24;--chalk:#F1EAD8}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#d9cfbf;color:var(--ink);font-family:Inter,Arial,sans-serif}
+  .bar{display:flex;gap:10px;justify-content:center;padding:14px;flex-wrap:wrap}
+  .bar button,.bar a{font:600 16px Inter,Arial,sans-serif;padding:12px 20px;border-radius:10px;border:0;background:var(--ox);color:#FBF6EC;cursor:pointer;text-decoration:none}
+  .bar a{background:var(--card);color:var(--ink);border:1px solid #cbbda5}
+  .sheet{width:min(100%, 8.5in);margin:0 auto 24px;background:var(--paper);aspect-ratio:8.5/11;padding:0.6in 0.6in 0.5in;display:flex;flex-direction:column;align-items:center;text-align:center;gap:0.18in;box-shadow:0 10px 40px rgba(42,26,18,.25)}
+  .logo{width:2.1in;height:auto}
+  .eyebrow{margin:0;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--ox);font-size:14pt}
+  h1{margin:0;font-family:"Playfair Display",Georgia,serif;font-size:40pt;line-height:1.05}
+  .lead{margin:0;font-size:15pt;color:var(--muted);max-width:5.8in}
+  .qr{background:#fff;padding:0.14in;border-radius:16px;border:3px solid var(--ink);width:2.9in;height:2.9in;display:grid;place-items:center}
+  .qr svg{width:100%;height:100%}
+  .scan{margin:0;font-weight:700;font-size:15pt}
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:0.16in;width:100%;margin-top:auto}
+  .step{background:var(--card);border:1px solid #e2d5bf;border-radius:14px;padding:0.16in 0.14in;text-align:left}
+  .step b{display:block;font-family:"Playfair Display",Georgia,serif;font-size:15pt;margin-bottom:4px}
+  .step span{font-size:11pt;line-height:1.35;color:var(--muted)}
+  .num{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--ox);color:#FBF6EC;font-weight:700;font-size:11pt;margin-right:6px;vertical-align:2px}
+  .url{margin:0;font-size:11pt;color:var(--muted);word-break:break-all}
+  @media print{
+    @page{size:letter;margin:0}
+    html,body{background:var(--paper)}
+    .bar{display:none}
+    .sheet{width:8.5in;height:11in;margin:0;box-shadow:none;aspect-ratio:auto}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  }
+</style>
+</head>
+<body>
+<div class="bar"><button type="button" onclick="window.print()">Print poster</button><a href="./">Back to the app</a></div>
+<main class="sheet">
+  <img class="logo" src="logo.webp" alt="JT Brewski's Pub">
+  <p class="eyebrow">Staff only</p>
+  <h1>Get the Brewski’s app</h1>
+  <p class="lead">Your shifts, tasks, events and the close, all on your phone.</p>
+  <div class="qr" id="qr" aria-label="QR code that opens the app">Making the QR code…</div>
+  <p class="scan">Scan with your phone’s camera</p>
+  <div class="steps">
+    <div class="step"><b><span class="num">1</span>Open it</b><span>iPhone: in Safari. Android: in Chrome.</span></div>
+    <div class="step"><b><span class="num">2</span>Add it</b><span>iPhone: Share, then Add to Home Screen. Android: Install app.</span></div>
+    <div class="step"><b><span class="num">3</span>Log in</b><span>Ask a manager for your login number. Then turn on notifications.</span></div>
+  </div>
+  <p class="url" id="url"></p>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+  const url = new URL("./", location.href).href;
+  document.getElementById("url").textContent = url;
+  try { const q = qrcode(0, "M"); q.addData(url); q.make(); document.getElementById("qr").innerHTML = q.createSvgTag({cellSize:8, margin:0, scalable:true}); }
+  catch (e) { document.getElementById("qr").textContent = "Couldn't make the QR code offline. Use the link below."; }
+</script>
+</body>
+</html>

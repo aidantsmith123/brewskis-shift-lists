@@ -7,6 +7,8 @@ The staff app for JT Brewski's Pub: shift checklists by role, inventory counts a
 | Folder | What it is |
 |---|---|
 | `site/` | The app itself (what people open on their phones) |
+| `site/js/` | The app's code, one file per part of the app, loaded in order by `site/index.html` (`core.js` first, `main.js` last) |
+| `site/poster.html` | The printable staff sign-up poster with a QR code |
 | `supabase/schema.sql` | The database: tables, logins, and every action the app can take |
 | `supabase/seed.sql` | Your current roles, team, 50 checklist tasks, inventory lists and suppliers |
 | `.github/workflows/pages.yml` | Publishes `site/` to GitHub Pages every time you push |
@@ -77,10 +79,10 @@ Managers can turn on alerts per phone (tap your name → Notification settings):
 
 ## Making changes later
 
-Every release bumps the version in three places: `APP_VERSION` at the top of `site/app.js`, `site/version.json`, and `VERSION` in `site/sw.js`. Phones on an older version get an "Update now" bar, and managers see who's behind on the Team tab.
+Every release bumps the version in three places: `APP_VERSION` at the top of `site/js/core.js`, `site/version.json`, and `VERSION` in `site/sw.js`. Phones on an older version update themselves the next time the app is opened or sits idle for a minute, unless someone is in the middle of something (they can also tap "Update now"), and managers see who's behind on the Team tab.
 
 
 Database updates live in `supabase/migrations/`. A new database's `schema.sql` already includes them; an existing database needs each new migration run once in the SQL Editor before the matching app update is published.
 
 
-Edit the files in `site/`, then change `VERSION` at the top of `site/sw.js` (for example `brewskis-v2`) so installed copies pick up the update, and push. Phones get the new version the next time the app is opened twice.
+Edit the files in `site/`, bump the three version numbers above, and push. Phones pick up the new version by themselves.

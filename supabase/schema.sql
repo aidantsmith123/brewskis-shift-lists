@@ -269,8 +269,7 @@ begin
                         from parties p where p.status in ('hold','booked') and p.day >= _shift_day() - 1), '[]') end,
     'settings', case when mgr then json_build_object(
                   'party_deposit', (select value from app_settings where name = 'party_deposit'),
-                  'party_form_last', (select max(submitted_at) from parties where source = 'form'),
-                  'cash_tolerance', _cash_tolerance()) else '{}'::json end,
+                  'party_form_last', (select max(submitted_at) from parties where source = 'form')) else '{}'::json end,
     -- managers: open alerts plus the last 3 days; everyone else: what they sent in the last 2 days
     'alerts', coalesce((select json_agg(a order by a.at desc) from manager_alerts a
                         where case when mgr then a.handled_at is null or a.at > now() - interval '3 days'
@@ -1896,33 +1895,24 @@ begin
 end $$;
 
 -- Change a setting (managers), as a dollar amount, or null to clear it.
---   party_deposit: the usual party deposit · cash_tolerance: how far off a cash-out can be before managers are alerted (default $5)
+--   party_deposit: the usual party deposit
 create or replace function api_set_setting(p_token uuid, p_name text, p_value jsonb) returns void language plpgsql
 set search_path = public, extensions as $$
 declare me staff := _mgr(p_token); v numeric;
 begin
-  if p_name is null or p_name not in ('party_deposit','cash_tolerance') then raise exception 'not_found'; end if;
+  if p_name is distinct from 'party_deposit' then raise exception 'not_found'; end if;
   if p_value is null or p_value = 'null'::jsonb then delete from app_settings where name = p_name; return; end if;
   begin v := (p_value #>> '{}')::numeric; exception when others then raise exception 'bad_amount'; end;
   if v is null or v < 0 or v > 100000 then raise exception 'bad_amount'; end if;
   insert into app_settings (name, value) values (p_name, to_jsonb(v)) on conflict (name) do update set value = excluded.value;
-  if p_name = 'party_deposit' then
-    perform _log(me, 'edited', 'the party deposit ($' || trim(to_char(v, 'FM999999990.99'), '.') || ')', 'Parties');
-  else
-    perform _log(me, 'edited', 'the cash-out alert (off by more than ' || _money(v) || ')', 'Cash');
-  end if;
+  perform _log(me, 'edited', 'the party deposit ($' || trim(to_char(v, 'FM999999990.99'), '.') || ')', 'Parties');
 end $$;
 
 -- ---------- cash-out at close (added Nov 2026) ----------
--- v38: Toast counts the drawer and prints a Closed Drawer Report. If its Expected deposit is negative, the drawer is
--- short by that much and a manager puts it back. The bartender just records whether it's short and the amount
--- (short_amt); managers mark it replenished. The bill-count columns below are from the first version and go unused.
--- Managers set up the cash drawers and each one's starting bank. Card tips get pulled from the drawer during the
--- shift, so at close a bartender counts what's left bill by bill and types in the cash sales and card tips from Toast:
---   expected = bank + cash sales - card tips paid out - paid outs      over/short = counted - expected
---   then: leave the bank and drop the rest (counted - bank).
--- One cash-out per drawer per shift day; counting again replaces it. Managers get an alert when one is off by more
--- than the cash_tolerance setting (default $5), and see every night's cash-outs. Staff only see tonight's.
+-- Toast counts each drawer and prints a Closed Drawer Report. If its Expected deposit is negative, the drawer is short by
+-- that much and a manager puts it back. At close the bartender records, per drawer, whether it's short and by how much
+-- (short_amt); managers get an alert and mark it replenished. One cash-out per drawer per shift day; entering it again
+-- replaces it. Managers see every night's; staff only see tonight's.
 create table if not exists drawers (
   id text primary key default gen_random_uuid()::text,
   name text not null,
@@ -1936,16 +1926,6 @@ create table if not exists cashouts (
   day date not null,                          -- the shift day
   drawer_id text references drawers(id) on delete set null,
   drawer_name text not null,
-  bank numeric not null default 0,
-  cash_sales numeric not null default 0,      -- from Toast
-  card_tips numeric not null default 0,       -- from Toast; already paid out of the drawer during the shift
-  paid_outs numeric not null default 0,       -- cash taken out for something else (a delivery, the DJ…)
-  paid_out_note text not null default '',
-  bills jsonb not null default '{}',          -- {"100":2,"50":1,"20":31,...,"coins":4.35}
-  counted numeric not null default 0,
-  expected numeric not null default 0,
-  diff numeric not null default 0,            -- counted - expected: + over, - short
-  drop_amt numeric not null default 0,        -- counted - bank
   note text not null default '',
   by_id text, by_name text,
   at timestamptz not null default now(),
@@ -1957,16 +1937,13 @@ create index if not exists cashouts_day_idx on cashouts (day desc);
 alter table cashouts add column if not exists short_amt numeric not null default 0;   -- 0 = not short
 alter table cashouts add column if not exists replenished_at timestamptz;
 alter table cashouts add column if not exists replenished_by_name text;
--- v37: card tips come out during the shift. Counts saved before that change are refigured the new way.
-do $$
-begin
-  if not exists (select 1 from app_settings where name = 'cash_math_v37') then
-    update cashouts set expected = bank + cash_sales - card_tips - paid_outs,
-                        diff = counted - (bank + cash_sales - card_tips - paid_outs),
-                        drop_amt = counted - bank;
-    insert into app_settings (name, value) values ('cash_math_v37', 'true');
-  end if;
-end $$;
+-- v48: the first version's bill-by-bill count is gone; so are its columns and settings.
+alter table cashouts drop column if exists bank, drop column if exists cash_sales, drop column if exists card_tips,
+  drop column if exists paid_outs, drop column if exists paid_out_note, drop column if exists bills, drop column if exists counted,
+  drop column if exists expected, drop column if exists diff, drop column if exists drop_amt;
+delete from app_settings where name in ('cash_tolerance','cash_math_v37');
+drop function if exists _cash_tolerance();
+drop function if exists _cash_result(numeric);
 do $$
 declare t text;
 begin
@@ -1981,14 +1958,6 @@ end $$;
 -- "$12.50", "$200"
 create or replace function _money(p numeric) returns text language sql immutable as $$
   select '$' || case when p = trunc(p) then to_char(abs(p), 'FM999,999,990') else to_char(abs(p), 'FM999,999,990.00') end
-$$;
-create or replace function _cash_tolerance() returns numeric language sql stable
-set search_path = public, extensions as $$
-  select coalesce((select (value #>> '{}')::numeric from app_settings where name = 'cash_tolerance'), 5)
-$$;
--- "balanced", "$12.50 short", "$3 over"
-create or replace function _cash_result(p_diff numeric) returns text language sql stable as $$
-  select case when abs(p_diff) < 0.005 then 'balanced' when p_diff < 0 then _money(p_diff) || ' short' else _money(p_diff) || ' over' end
 $$;
 
 -- Add (p_id null) or change a drawer (managers).
@@ -2041,9 +2010,9 @@ begin
     if amt > 100000 then raise exception 'bad_amount'; end if;
   end if;
   select * into old from cashouts where day = d and drawer_id = dr.id for update;
-  insert into cashouts (day, drawer_id, drawer_name, short_amt, diff, note, by_id, by_name)
-  values (d, dr.id, dr.name, amt, -amt, left(trim(coalesce(p_data->>'note','')), 1000), me.id, me.name)
-  on conflict (day, drawer_id) do update set drawer_name = excluded.drawer_name, short_amt = excluded.short_amt, diff = excluded.diff,
+  insert into cashouts (day, drawer_id, drawer_name, short_amt, note, by_id, by_name)
+  values (d, dr.id, dr.name, amt, left(trim(coalesce(p_data->>'note','')), 1000), me.id, me.name)
+  on conflict (day, drawer_id) do update set drawer_name = excluded.drawer_name, short_amt = excluded.short_amt,
      note = excluded.note, by_id = excluded.by_id, by_name = excluded.by_name, at = now(), edits = cashouts.edits + 1,
      replenished_at = case when excluded.short_amt = cashouts.short_amt then cashouts.replenished_at end,
      replenished_by_name = case when excluded.short_amt = cashouts.short_amt then cashouts.replenished_by_name end

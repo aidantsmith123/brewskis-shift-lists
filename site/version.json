@@ -1,5 +1,5 @@
 {
-  "version": 47,
-  "date": "2026-11-02",
-  "notes": "Daily cash: \"Cash left over\" is now COH (cash on hand)."
+  "version": 48,
+  "date": "2026-11-03",
+  "notes": "Updates now install themselves when you open the app or leave it idle. New: text someone their login number with the app link, and a sign-up poster with a QR code. Behind-the-scenes cleanup."
 }

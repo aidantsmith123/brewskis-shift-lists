@@ -1,7 +1,8 @@
 // Service worker: keeps the app itself available offline. Data always comes live from Supabase.
-const VERSION = "brewskis-v47";
-const SHELL = ["./", "index.html", "taps.html", "styles.css", "app.js", "config.js", "manifest.webmanifest", "logo.webp",
-  "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
+const VERSION = "brewskis-v48";
+const SHELL = ["./", "index.html", "taps.html", "styles.css",
+  "js/core.js", "js/account.js", "js/ui.js", "js/tasks.js", "js/inventory.js", "js/schedule.js", "js/team.js", "js/events.js", "js/parties.js", "js/alerts.js", "js/cash.js", "js/main.js", "config.js", "manifest.webmanifest", "logo.webp",
+  "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png", "poster.html"];
 
 self.addEventListener("install", event => {
   // cache: "reload" skips the browser's own cache so an update always gets the newest files
