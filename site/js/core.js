@@ -5,7 +5,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 50;
+const APP_VERSION = 51;
 const APP_DATE = "2026-11-03";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";

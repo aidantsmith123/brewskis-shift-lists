@@ -31,7 +31,7 @@ with sync_playwright() as p:
     a=login(b,"4821","aidan"); a.on("pageerror", lambda e: errs.append(str(e)))
     a.get_by_role("button", name="Turn on notifications").click(); a.wait_for_timeout(1000)
     sw=switches(a); print("Aidan:", sw)
-    for x in ["Shifts that need coverage","New tasks","Order deadlines","Alerts from staff","Daily cash","Short drawers","Nightly recap","Quiet hours"]: assert x in sw, (x, sw)
+    for x in ["Shifts that need coverage","New tasks","Your tasks get done","Order deadlines","Alerts from staff","Daily cash","Short drawers","Nightly recap","Quiet hours"]: assert x in sw, (x, sw)
     a.locator("#pfLead + .drop button[data-value='4']").dispatch_event("click"); a.wait_for_timeout(500)
     a.locator("#pf-out").uncheck(); a.wait_for_timeout(500)
     a.locator("#pfRecap").fill("03:00"); a.locator("#pfRecap").dispatch_event("change"); a.wait_for_timeout(600)

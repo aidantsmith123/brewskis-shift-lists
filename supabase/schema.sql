@@ -353,6 +353,7 @@ begin
 
   select name into rname from roles where id = t.role_id;
   perform _log(me, case when was_done then 'undone' else 'done' end, t.text, coalesce(rname, 'Tasks'));
+  if not was_done and t.added_by is distinct from me.id and t.added_by is not null then perform _push_kick(); end if;   -- tell whoever added it
 end $$;
 
 drop function if exists api_add_task(uuid, text, text, text, text);
@@ -634,11 +635,11 @@ $$;
 
 -- Settings with defaults filled in and junk thrown out.
 create or replace function _push_prefs(p jsonb) returns jsonb language plpgsql immutable as $$
-declare d jsonb := '{"orders":true,"lead_hours":2,"overdue":true,"out":true,"summary":true,"swaps":true,"coverage":true,"tasks":true,"cash":true,"staff":true,"cashbook":true,"summary_time":"09:00","quiet":true,"quiet_start":"00:00","quiet_end":"08:00"}';
+declare d jsonb := '{"orders":true,"lead_hours":2,"overdue":true,"out":true,"summary":true,"swaps":true,"coverage":true,"tasks":true,"cash":true,"staff":true,"cashbook":true,"done":true,"summary_time":"09:00","quiet":true,"quiet_start":"00:00","quiet_end":"08:00"}';
         r jsonb := d; k text;
 begin
   p := coalesce(p, '{}');
-  foreach k in array array['orders','overdue','out','summary','swaps','coverage','tasks','cash','staff','cashbook','quiet'] loop
+  foreach k in array array['orders','overdue','out','summary','swaps','coverage','tasks','cash','staff','cashbook','done','quiet'] loop
     if jsonb_typeof(p->k) = 'boolean' then r := jsonb_set(r, array[k], p->k); end if;
   end loop;
   if jsonb_typeof(p->'lead_hours') = 'number' then r := jsonb_set(r, '{lead_hours}', to_jsonb(least(greatest((p->>'lead_hours')::numeric::int, 1), 48))); end if;
@@ -754,7 +755,7 @@ declare tz text := 'America/New_York'; lnow timestamp := p_now at time zone tz; 
         r record; ov_title text[]; ov_body text[]; os_title text[]; os_body text[];
         total int; done_n int; missed text[]; n_over int; n_out int; body text; st time; due_now boolean;
         endpoint_key text; quiet boolean; sw text[]; cv text[]; mgr boolean; nt text[]; nt_star boolean; nt_party int;
-        cs text[]; n_short int; cash_line text; sa text[]; sa_direct boolean;
+        cs text[]; n_short int; cash_line text; sa text[]; sa_direct boolean; td text[];
 begin
   delete from push_sent where sent_at < p_now - interval '45 days';
   -- everyone who turned notifications on gets coverage alerts; the rest is for managers
@@ -969,6 +970,29 @@ begin
         out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
           'title', array_length(sa, 1) || ' alerts from staff', 'body', array_to_string(sa[1:3], '. ') || case when array_length(sa,1) > 3 then '…' else '' end,
           'url', './#alerts', 'tag', 'staff');
+      end if;
+    end if;
+
+    -- 12. a task this manager added got checked off by someone else: what, and who did it
+    if mgr and (p->>'done')::boolean and not quiet then
+      td := '{}';
+      for r in select tk.id, tk.text, tk.done_by_name, tk.done_at from tasks tk
+                where tk.added_by = sub.staff_id and tk.done and tk.done_at is not null
+                  and tk.done_at > p_now - interval '12 hours' and tk.done_at > sub.created_at
+                  and tk.done_by is distinct from sub.staff_id
+                order by tk.done_at loop
+        k := 'done:' || endpoint_key || ':' || r.id || ':' || extract(epoch from r.done_at)::bigint;   -- each time a repeating task is done
+        insert into push_sent(key) values (k) on conflict do nothing; get diagnostics rc = row_count;
+        continue when rc = 0;
+        td := td || (coalesce(r.done_by_name, 'Someone') || ' checked off “' || left(r.text, 120) || '”');
+      end loop;
+      if array_length(td, 1) = 1 then
+        out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
+          'title', 'Task done ✓', 'body', td[1], 'url', './', 'tag', 'done');
+      elsif array_length(td, 1) > 1 then
+        out := out || jsonb_build_object('endpoint', sub.endpoint, 'p256dh', sub.p256dh, 'auth', sub.auth,
+          'title', array_length(td, 1) || ' of your tasks done ✓', 'body', array_to_string(td[1:3], '. ') || case when array_length(td,1) > 3 then '…' else '' end,
+          'url', './', 'tag', 'done');
       end if;
     end if;
 

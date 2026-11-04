@@ -1,5 +1,5 @@
 {
-  "version": 50,
+  "version": 51,
   "date": "2026-11-03",
-  "notes": "Tasks assigned to someone else are off your to-do list and out of your \"x of y done\" count. Managers can still see them in a folded \"Assigned to others\" group at the bottom of the list."
+  "notes": "New notification for managers: when someone checks off a task you added, you're told what got done and who did it. Turn it on or off under Notifications, \"Your tasks get done\"."
 }

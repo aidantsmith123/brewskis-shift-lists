@@ -279,6 +279,7 @@ function viewNotify(){
         h("li",{text:"New tasks for you, your role, or everyone"}),
         h("li",{text:"Order deadlines coming up that haven't been ordered"}),
         h("li",{text:"Tasks that go overdue, and items counted at zero"}),
+        h("li",{text:"When someone checks off a task you added"}),
         h("li",{text:"A drawer that comes up short at close"}),
         h("li",{text:"Alerts from staff who tap Notify a manager"}),
         h("li",{text:"A recap of each shift day's tasks"}))
@@ -303,6 +304,7 @@ function viewNotify(){
       h("label",{class:"lbl", for:"pfLead"}, "Remind me",
         h("select",{id:"pfLead", disabled:S.push.busy, onchange:e=>updatePush({lead_hours:Number(e.target.value)})},
           [[1,"1 hour before"],[2,"2 hours before"],[4,"4 hours before"],[24,"1 day before"]].map(([v,l])=>h("option",{value:v, selected:Number(p.lead_hours)===v}, l))))),
+    prefRow("done", "Your tasks get done", "When someone checks off a task you added, and who did it."),
     prefRow("overdue", "Overdue tasks", "When a task passes its due date or due time without being checked off. One alert per task."),
     prefRow("out", "Out of stock", "When someone counts an item at 0."),
     canCashBook() ? prefRow("cashbook", "Daily cash", "When one of the others enters a day’s cash numbers.") : null,

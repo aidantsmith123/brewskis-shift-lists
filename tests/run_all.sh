@@ -8,7 +8,7 @@ declare -A SETUP=(
   [e2e]=reset [e2e_versions]=reset [e2e_taps]=reset [e2e_supfilter]=reset
   [e2e_v8]=v8 [e2e_listsup]=v8
 )
-SUITES="e2e e2e_tasks e2e_sched e2e_sides e2e_sound e2e_schedule e2e_events e2e_repeat e2e_promote e2e_parties e2e_cash e2e_dailycash e2e_alerts e2e_settings e2e_push e2e_versions e2e_sup e2e_supfilter e2e_listsup e2e_v8 e2e_taps e2e_live"
+SUITES="e2e e2e_tasks e2e_sched e2e_sides e2e_sound e2e_schedule e2e_events e2e_repeat e2e_promote e2e_parties e2e_cash e2e_dailycash e2e_alerts e2e_settings e2e_push e2e_versions e2e_sup e2e_supfilter e2e_listsup e2e_v8 e2e_taps e2e_live e2e_taskdone"
 pass=0; fail=0; failed=""
 for t in $SUITES; do
   case "${SETUP[$t]:-v22}" in
