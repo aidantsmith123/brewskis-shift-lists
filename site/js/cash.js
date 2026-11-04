@@ -18,9 +18,9 @@ function dailyCashBoardRow(today){
 }
 function dcStats(d){
   return h("div",{class:"cashstats"},
-    h("div",{class:"cstat"}, h("small",{text:"Cash sales"}), h("b",{text:cash(d.cash_sales)})),
-    h("div",{class:"cstat"}, h("small",{text:"Payouts"}), h("b",{text:cash(d.payouts_total)})),
-    h("div",{class:"cstat"+(Number(d.left_over) < 0 ? " neg" : "")}, h("small",{text:"COH"}), h("b",{text:signed(d.left_over)})));
+    h("div",{class:"cstat"}, h("small",{text:"Cash sales"}), h("b",{}, roll("dc-sales", cash(d.cash_sales)))),
+    h("div",{class:"cstat"}, h("small",{text:"Payouts"}), h("b",{}, roll("dc-pay", cash(d.payouts_total)))),
+    h("div",{class:"cstat"+(Number(d.left_over) < 0 ? " neg" : "")}, h("small",{text:"COH"}), h("b",{}, roll("dc-coh", signed(d.left_over)))));
 }
 function dailyCashCard(){
   const list = dailyCash(), latest = list[0];
@@ -276,7 +276,7 @@ function viewCash(){
   /* drawers waiting on a manager */
   const owed = cashouts().filter(needsRefill).sort((a,b)=>a.day.localeCompare(b.day));
   if (owed.length) out.push(h("section",{class:"card stack refill"},
-    h("div",{class:"row"}, h("h3",{text:"Needs replenishing"}), h("span",{class:"tag danger", text:cash(owed.reduce((s,c)=>s+Number(c.short_amt),0))})),
+    h("div",{class:"row"}, h("h3",{text:"Needs replenishing"}), h("span",{class:"tag danger"}, roll("refill", cash(owed.reduce((s,c)=>s+Number(c.short_amt),0))))),
     owed.map(c=>h("div",{class:"cashrow"},
       h("button",{type:"button", class:"t linkish", onclick:()=>openCashDetail(c)}, h("b",{text:c.drawer_name+" · "+cash(c.short_amt)}), h("span",{class:"hint", text:shortDay(c.day)+" · "+(c.by_name||"")})),
       canWrite() ? h("button",{type:"button", class:"btn small", onclick:()=>act("api_replenish",{p_id:c.id, p_done:true}, c.drawer_name+" replenished ✓")},"Replenished") : null))));
@@ -292,8 +292,8 @@ function viewCash(){
   if (!list.length) sec.append(h("p",{class:"hint", text:"Nothing before tonight in this range yet."}));
   else {
     sec.append(h("div",{class:"cashstats two"},
-      h("div",{class:"cstat"+(shorts.length ? " neg" : "")}, h("small",{text:"Nights short"}), h("b",{text:String(shorts.length)}), h("small",{text:"of "+list.length+" cash-outs"})),
-      h("div",{class:"cstat"+(total ? " neg" : "")}, h("small",{text:"Total short"}), h("b",{text:cash(total)}), h("small",{text: shorts.length ? "about "+cash(total/shorts.length)+" a time" : "Nothing to put back"}))));
+      h("div",{class:"cstat"+(shorts.length ? " neg" : "")}, h("small",{text:"Nights short"}), h("b",{}, roll("cash-nights", shorts.length)), h("small",{text:"of "+list.length+" cash-outs"})),
+      h("div",{class:"cstat"+(total ? " neg" : "")}, h("small",{text:"Total short"}), h("b",{}, roll("cash-total", cash(total))), h("small",{text: shorts.length ? "about "+cash(total/shorts.length)+" a time" : "Nothing to put back"}))));
     const days = [...new Set(list.map(c=>c.day))].sort().reverse();
     sec.append(h("div",{class:"stack cashdays"}, days.map(day=>h("div",{class:"cashday"},
       h("div",{class:"divider", text:shortDay(day)}),

@@ -5,7 +5,7 @@
 
 const CFG = window.BREWSKIS_CONFIG || {};
 /* The app's version. Bump this, site/version.json and VERSION in site/sw.js together with every release. */
-const APP_VERSION = 48;
+const APP_VERSION = 49;
 const APP_DATE = "2026-11-03";
 const ROLL_HOUR = 5;
 const SESSION_KEY = "brewskis.session";
@@ -91,11 +91,12 @@ async function act(fn, args, okMsg){
   await refresh();
   return true;
 }
-async function refresh(){
+async function refresh(opts){
   if (!S.session) return;
   try {
-    const d = await call("api_state");
-    S.data = d; S.dataAt = new Date().toISOString(); S.weekCache = {};
+    const d = await call("api_state"), prev = S.data;
+    S.data = d; S.dataAt = new Date().toISOString(); S.weekCache = {}; S.refreshedAt = Date.now();
+    if (opts && opts.notice) try { noticeChanges(prev, d); } catch(e){}
     sayHello();
     if (S.view==="team" && Date.now() - S.versionsAt > 60000) loadVersions();
     try { localStorage.setItem(CACHE_KEY, JSON.stringify({token:S.session.token, at:S.dataAt, data:d})); } catch(e){}
@@ -222,7 +223,7 @@ function loadSession(){ try { const v = localStorage.getItem(SESSION_KEY); retur
 function storeSession(s){ try { s ? localStorage.setItem(SESSION_KEY, JSON.stringify(s)) : localStorage.removeItem(SESSION_KEY); } catch(e){} }
 function logOut(msg){
   const tok = S.session && S.session.token;
-  S.session = null; S.data = null; storeSession(null);
+  S.session = null; S.data = null; storeSession(null); if (typeof liveStop==="function") liveStop();
   try { localStorage.removeItem(CACHE_KEY); } catch(e){}
   if (tok) rpc("api_logout", {p_token:tok}).catch(()=>{});
   S.view = "overview"; S.invEdit = false; S.pin = "";

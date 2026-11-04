@@ -68,16 +68,19 @@ document.addEventListener("keydown", e=>{
   if (S.session || !document.querySelector(".keypad") || e.target.matches("input,select,textarea")) return;
   if (/^\d$/.test(e.key)) pressKey(e.key); else if (e.key==="Backspace") pressKey("del"); else if (e.key==="Enter") pressKey("go");
 });
-document.addEventListener("visibilitychange", ()=>{ if (!document.hidden){ refresh(); checkLatest(); render(); } });
-window.addEventListener("online", ()=>{ setOffline(false); refresh(); });
+document.addEventListener("visibilitychange", ()=>{ if (document.hidden){ liveStop(); return; } refresh({notice:true}); checkLatest(); render(); liveStart(); });
+window.addEventListener("online", ()=>{ setOffline(false); refresh({notice:true}); liveStop(); LIVE.retry = 0; liveStart(); });
 window.addEventListener("offline", ()=>setOffline(true));
 window.addEventListener("beforeinstallprompt", e=>{ e.preventDefault(); S.installEvent = e; render(); });
 window.addEventListener("appinstalled", ()=>{ S.installEvent = null; render(); toast("Installed. Open Brewskis from your home screen."); });
+/* the regular check: every 15 seconds, or once a minute while live updates are coming in */
 setInterval(()=>{
-  if (document.hidden || !S.session) return;
-  const typing = document.activeElement && document.activeElement.matches && document.activeElement.matches("input,select,textarea");
-  if (!typing && !openDrop && !Object.keys(S.countDraft).length) refresh();
+  if (document.hidden || !S.session || busyHands()) return;
+  if (LIVE.up && Date.now() - (S.refreshedAt||0) < 60000) return;
+  refresh({notice:true});
 }, POLL_MS);
+/* live updates follow the login: connect once someone's logged in, hang up when they log out */
+setInterval(()=>{ if (S.session && !document.hidden) liveStart(); else if (!S.session && (LIVE.ws || LIVE.retryTimer)) liveStop(); }, 3000);
 setInterval(()=>{ if (!document.hidden && !openDrop && !(document.activeElement && document.activeElement.matches && document.activeElement.matches("input,select,textarea"))) render(); }, 60000);
 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")){
@@ -88,14 +91,16 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
 ["gesturestart","gesturechange","gestureend"].forEach(t=>document.addEventListener(t, e=>e.preventDefault(), {passive:false}));
 document.addEventListener("touchmove", e=>{ if (e.touches.length > 1 || (e.scale && e.scale !== 1)) e.preventDefault(); }, {passive:false});
 
-/* pull down at the top of the screen to refresh */
+/* pull down at the top of the screen to refresh: a little pint fills as you pull, then bubbles while it loads */
 (function pullToRefresh(){
-  const ind = h("div",{class:"ptr", "aria-hidden":"true"}, h("span",{class:"ptr-spin"}));
+  const beer = h("i",{class:"pint-beer"}, h("b"), h("b"), h("b"));
+  const ind = h("div",{class:"ptr", "aria-hidden":"true"}, h("span",{class:"pint"}, beer));
   document.body.append(ind);
   const TRIGGER = 64, MAX = 96;
   let y0 = null, pull = 0, busy = false;
   const set = px => { ind.style.transform = "translate(-50%,"+(px - 52)+"px)"; ind.style.opacity = String(Math.min(1, px/TRIGGER));
-                      ind.firstChild.style.transform = "rotate("+(px*4)+"deg)"; ind.classList.toggle("ready", px >= TRIGGER); };
+                      beer.style.height = Math.min(84, Math.round(px/TRIGGER*84))+"%"; ind.classList.toggle("ready", px >= TRIGGER);
+                      if (px >= TRIGGER && !ind.dataset.full){ ind.dataset.full = "1"; play("tickUp"); } else if (px < TRIGGER) delete ind.dataset.full; };
   const blocked = e => !S.session || busy || !$("sheet").hidden || window.scrollY > 2 || document.getElementById("intro") ||
                        (e.target.closest && e.target.closest("input,textarea,select,.keypad"));
   addEventListener("touchstart", e=>{ y0 = (e.touches.length===1 && !blocked(e)) ? e.touches[0].clientY : null; pull = 0; }, {passive:true});
@@ -109,7 +114,7 @@ document.addEventListener("touchmove", e=>{ if (e.touches.length > 1 || (e.scale
     if (y0==null) return; y0 = null;
     if (pull >= TRIGGER){
       busy = true; ind.classList.add("spin"); set(TRIGGER); play("tap");
-      await Promise.all([refresh(), Promise.resolve(checkLatest()).catch(()=>{}), new Promise(r=>setTimeout(r, 700))]);
+      await Promise.all([refresh({notice:true}), Promise.resolve(checkLatest()).catch(()=>{}), new Promise(r=>setTimeout(r, 900))]);
       busy = false; ind.classList.remove("spin");
     }
     pull = 0; set(0);
@@ -152,7 +157,7 @@ document.addEventListener("touchmove", e=>{ if (e.touches.length > 1 || (e.scale
   if (location.hash==="#dailycash"){ S.view = "cash"; setTimeout(scrollToDailyCash, 1500); }
   if (location.hash==="#alerts"){ S.view = "overview"; setTimeout(scrollToAlerts, 1500); }   // an alert from staff
   render();
-  if (S.session && configured()) refresh();
+  if (S.session && configured()){ refresh({notice:true}); liveStart(); }
   checkLatest(true).then(()=>autoUpdate(0));
   try { const u = sessionStorage.getItem("brewskis.updated"); if (u){ sessionStorage.removeItem("brewskis.updated");
     const v = sessionStorage.getItem("brewskis.view"); sessionStorage.removeItem("brewskis.view");

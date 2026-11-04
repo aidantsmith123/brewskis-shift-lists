@@ -28,6 +28,8 @@ then `python3 tests/e2e_parties.py /tmp/brewskis-e2e`.
   then today's `supabase/schema.sql` on top. Test login numbers: Aidan 4821, Jill 1111.
 - `setup_v22.sh` does that, clears the old checklists, and adds Kate (2222, closing bartender) and Liam (5555, dishwasher).
 - `fixtures/v8_state.sql` adds the liquor list a few inventory suites use.
+- `fixtures/realtime_stub.sql` stands in for Supabase's `realtime.send`. `fake_postgrest.py` passes what it sends on to the app
+  over its own websocket, speaking the same protocol as Supabase Realtime, so `e2e_live.py` can check live updates end to end.
 
 The login numbers here are for the test database only. None of them is a real login number.
 

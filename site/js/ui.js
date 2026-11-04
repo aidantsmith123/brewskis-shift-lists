@@ -104,6 +104,33 @@ function bar(pct, key){
   return h("div",{class:"bar", role:"progressbar", "aria-valuenow":pct, "aria-valuemin":0, "aria-valuemax":100},
     h("i",{style:"width:"+g.from+"%", "data-grow-w":g.to}));
 }
+/* numbers that roll like an odometer when they change. Each digit is a 0–9 strip that slides to its new place;
+   commas, $ and the like stay put. `fromZero` rolls up from 0 the first time a number is shown. */
+const lastRolled = new Map(), ROLL_MS = 900;
+const reduceMotion = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function roll(key, value, opts={}){
+  const text = String(value), now = Date.now();
+  let r = lastRolled.get(key);
+  if (!r) r = {from: opts.fromZero ? text.replace(/\d/g, "0") : text, to: text, at: now + (opts.fromZero && document.getElementById("intro") ? 1500 : 0)};
+  else if (r.to!==text) r = {from: r.to, to: text, at: now};
+  lastRolled.set(key, r);
+  const age = now - r.at;
+  /* nothing to roll, or it already finished: a plain number. A redraw mid-roll picks up where it left off. */
+  if (r.from===text || age >= ROLL_MS || reduceMotion()) return h("span",{class:"roll", text});
+  const out = h("span",{class:"roll"}, h("span",{class:"sr-only", text})), n = text.length, m = r.from.length;
+  for (let i = 0; i < n; i++){
+    const ch = text[i];
+    if (!/\d/.test(ch)){ out.append(h("span",{"aria-hidden":"true", text:ch})); continue; }
+    const before = r.from[m - n + i], from = before && /\d/.test(before) ? +before : 0;
+    out.append(h("span",{class:"rd", "aria-hidden":"true"},
+      h("span",{class:"rs", style:"--from:"+(-from*10)+"%;--to:"+(-ch*10)+"%;animation-delay:"+(-age)+"ms"},
+        [0,1,2,3,4,5,6,7,8,9].map(d=>h("span",{text:String(d)})))));
+  }
+  /* once every digit has landed, go back to plain text (so copying, searching and screen readers see "12", not strips) */
+  let left = out.querySelectorAll(".rs").length;
+  out.addEventListener("animationend", e=>{ if (e.target.classList.contains("rs") && --left <= 0) out.textContent = text; });
+  return out;
+}
 /* after each render: slide bars to their new values, and fade in a newly opened screen */
 let lastScreen = null;
 function afterRender(){
@@ -127,7 +154,10 @@ function afterRender(){
 function skeleton(kind){
   const b = (cls, style) => h("div",{class:"skel "+(cls||""), style:style||"", "aria-hidden":"true"});
   const busy = h("p",{class:"sr-only", role:"status", text:"Loading…"});
-  if (kind==="home") return [busy, b("skel-hero"), b("", "height:22px;width:38%"), h("div",{class:"stack"}, [0,1,2,3].map(()=>b("skel-row")))];
+  if (kind==="home") return [h("div",{class:"pouring", role:"status"},
+      h("span",{class:"pint big", "aria-hidden":"true"}, h("i",{class:"pint-beer"}, h("b"), h("b"), h("b"))),
+      h("p",{text:"Pouring…"})),
+    h("div",{class:"stack"}, [0,1,2].map(()=>b("skel-row")))];
   if (kind==="week") return [busy, h("div",{class:"stack"}, [0,1,2].map(()=>b("skel-day")))];
   return [busy, h("div",{class:"stack"}, [0,1,2].map(()=>b("skel-row")))];
 }

@@ -36,6 +36,43 @@ function boardRow(cls, label, value, onclick, hot){
   return h("button",{type:"button", class:"bd-row "+cls+(hot?" hot":""), onclick},
     h("span",{class:"bd-l", text:label}), h("span",{class:"bd-dots", "aria-hidden":"true"}), h("span",{class:"bd-v", text:value}));
 }
+/* ---------- the greeting: changes with the day, the hour and what's on tonight ----------
+   Picks are steady for the whole day (the same person sees the same words all day) so nothing flickers. */
+function pickFor(seed, list){ let x = 0; for (const c of seed) x = (x*31 + c.charCodeAt(0)) >>> 0; return list[x % list.length]; }
+function holidayHello(day){
+  const d = parseDay(day), md = day.slice(5), y = d.getFullYear();
+  const nov1 = new Date(y, 10, 1), thanks = 1 + ((4 - nov1.getDay() + 7) % 7) + 21;   // the fourth Thursday of November
+  const tg = y+"-11-"+String(thanks).padStart(2,"0");
+  return {"03-17":"Happy St. Patrick’s Day", "07-04":"Happy Fourth", "10-31":"Happy Halloween", "12-24":"Merry Christmas Eve",
+          "12-25":"Merry Christmas", "12-31":"Happy New Year’s Eve", "01-01":"Happy New Year"}[md]
+      || (day===tg ? "Happy Thanksgiving" : day===addDays(tg,-1) ? "Happy Thanksgiving Eve" : null);
+}
+function greeting(now, day){
+  const seed = day + (me().id||""), hr = now.getHours(), wd = parseDay(day).getDay();
+  const hol = holidayHello(day); if (hol) return hol;
+  if (hr >= 22 || hr < 5) return pickFor(seed, ["Late one tonight", "Still at it", "Home stretch", "Night owl hours"]);
+  if (wd===5 && hr >= 11) return "Happy Friday";
+  if (wd===6) return "Happy Saturday";
+  if (wd===0 && hr >= 10) return pickFor(seed, ["Happy Sunday", "Sunday Funday"]);
+  if (hr < 12) return pickFor(seed, ["Good morning", "Morning", "Rise and shine"]);
+  if (hr < 17) return pickFor(seed, ["Good afternoon", "Afternoon", "Hey there"]);
+  return pickFor(seed, ["Good evening", "Evening", "Hey there"]);
+}
+/* one line on what's happening today */
+function vibeLine(day, now){
+  if (now.getHours() >= 23 || now.getHours() < 5) return null;
+  const evs = eventInstances(day, day), parties = evs.filter(e=>e.kind==="party"), rest = evs.filter(e=>e.kind!=="party");
+  const game = evs.some(e=>/\b(eagles|phillies|sixers|76ers|flyers|union)\b/i.test(e.title||""));
+  const at = e => e.start_time ? " at "+compactTime(fmtClock(e.start_time)) : "";
+  if (!evs.length) return pickFor(day, ["Nothing on the calendar tonight", "No events tonight. Just good beer.", "A quiet one on the calendar"]);
+  if (evs.length===1){ const e = evs[0]; return (game ? "Game day: " : e.kind==="party" ? "Party tonight: " : "Tonight: ")+e.title+at(e); }
+  const bits = [];
+  if (parties.length) bits.push(parties.length===1 ? "a party" : parties.length+" parties");
+  rest.slice(0, 2).forEach(e=>bits.push(e.title));
+  if (rest.length > 2) bits.push(rest.length-2+" more");
+  return (game ? "Game day! " : "Busy one tonight: ")+bits.slice(0,-1).join(", ")+(bits.length>1 ? " and " : "")+bits[bits.length-1];
+}
+const ALL_DONE = ["All done for today 🍻", "Every box checked. Cheers 🍻", "Clean sweep today 🍻", "That’s everything. Nice work 🍻"];
 function tonightCard(all){
   const m = me(), now = new Date(), today = shiftDay();
   const p = progressOf(all.filter(countsToday)), over = all.filter(isOverdue).length;
@@ -70,7 +107,7 @@ function tonightCard(all){
     const nx = suppliersByDeadline().find(x=>x.d && !x.ordered);
     if (nx) rows.push(boardRow("tn-order", "Order "+nx.s.name, compactTime(dueText(nx.d).split(" · ")[0]), ()=>go("inventory"), nx.d - now < 24*3600e3));
   }
-  const hr = now.getHours(), hello = hr >= 5 && hr < 12 ? "Good morning" : hr >= 12 && hr < 17 ? "Good afternoon" : "Good evening";
+  const hello = greeting(now, today), vibe = vibeLine(today, now);
   const left = p.total - p.done;
   return h("div",{class:"tonight"},
     h("section",{class:"tn-top", "aria-label":"Today"},
@@ -78,8 +115,9 @@ function tonightCard(all){
         h("span",{class:"eyebrow", text:parseDay(today).toLocaleDateString(undefined,{weekday:"long"})+" · "+parseDay(today).toLocaleDateString(undefined,{month:"long", day:"numeric"})}),
         h("h2",{}, hello+", ", h("i",{text:(m.name||"").split(/\s+/)[0]})),
         h("p",{class:"tn-sum"},
-          h("span",{text: !p.total ? "Nothing due today" : !left ? "All done for today 🍻" : p.done+" of "+p.total+" done"}),
-          over ? h("span",{class:"tn-over", text:" · "+over+" overdue"}) : null)),
+          h("span",{}, !p.total ? "Nothing due today" : !left ? pickFor(today+"done", ALL_DONE) : [roll("tn-done", p.done, {fromZero:true}), " of "+p.total+" done"]),
+          over ? h("span",{class:"tn-over"}, " · ", roll("tn-over", over), " overdue") : null),
+        vibe ? h("p",{class:"tn-vibe", text:vibe}) : null),
       h("div",{class:"tn-stein", title:p.done+" of "+p.total+" done"}, stein(p.pct))),
     rows.length ? h("section",{class:"board", "aria-label":"Tonight at Brewski's"},
       h("h3",{class:"bd-title", text:"Tonight at Brewski's"}), rows) : null);
@@ -106,7 +144,7 @@ function viewOverview(){
   }
   const starred = all.filter(t=>t.important && !isDone(t)).length;
   out.push(h("div",{class:"chips", role:"group", "aria-label":"Show"},
-    [["all","All tasks"],["mine","For me"],["important","★ Important"+(starred?" · "+starred:"")]].map(([id,label])=>
+    [["all","All tasks"],["mine","For me"],["important",["★ Important", starred ? [" · ", roll("starred", starred)] : null]]].map(([id,label])=>
       h("button",{type:"button", class:"chip", "aria-pressed":String(S.taskFilter===id), onclick:()=>{ S.taskFilter = id; render(); }}, label))));
   let list = all;
   if (S.taskFilter==="mine") list = list.filter(isMineTask);
@@ -128,16 +166,21 @@ function viewOverview(){
   out.push(activitySection());
   return out;
 }
-function activitySection(){
-  const admin = isAdmin();
+/* the activity feed's entries this person may see, newest first */
+function activityEvents(data){
+  const d = data || D(), admin = isAdmin();
   const VERB = {done:" checked off “%”", undone:" unchecked “%”", added:" added “%”", removed:" removed “%”", edited:" edited “%”", count:" counted %", ordered:" placed the % order", tapped:" put % on tap", kicked:" marked % kicked", shift_posted:" asked for coverage on %", shift_taken:" is covering %", skipped:" called off %", unskipped:" brought back %",
                 inquiry:" asked about a party: %", held:" put a hold on %", booked:" booked %", declined:" declined %", cancelled:" cancelled %", reopened:" reopened %", deposit:" took the deposit for %", cashout:" cashed out %", recount:" changed the cash-out for %", replenished:" replenished %", unreplenished:" un-marked %", alerted:" alerted %", handled:" handled %"};
   /* staff only see activity from their side of the pub, plus inventory counts */
-  const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(D().roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); ok.add("Tasks"); ok.add("Events"); return place=>ok.has(place); })();
+  const placeOk = admin ? ()=>true : (()=>{ const ok = new Set(d.roles.filter(canSeeRole).map(r=>r.name)); ok.add("Inventory"); ok.add("Schedule"); ok.add("Tasks"); ok.add("Events"); return place=>ok.has(place); })();
   /* staff don't see activity on tasks assigned to someone else */
-  const othersTasks = admin ? new Set() : new Set(D().tasks.filter(t=>t.assignee && t.assignee!==me().id).map(t=>t.text));
+  const othersTasks = admin ? new Set() : new Set(d.tasks.filter(t=>t.assignee && t.assignee!==me().id).map(t=>t.text));
   const TASK_KINDS = new Set(["added","edited","removed","done","undone"]);
-  const ev = D().log.filter(l=>placeOk(l.place||"") && !(TASK_KINDS.has(l.kind) && othersTasks.has(l.text))).map(l=>({at:l.at, who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place==="Schedule" ? "Shifts" : (l.place||"")}));   // the Schedule tab is called Shifts now
+  return d.log.filter(l=>placeOk(l.place||"") && !(TASK_KINDS.has(l.kind) && othersTasks.has(l.text))).map(l=>({id:l.id, at:l.at, whoId:l.who, kind:l.kind, text:l.text||"", who:l.who_name || staffName(l.who), what:(VERB[l.kind]||" updated %").replace("%", l.text||""), where:l.place==="Schedule" ? "Shifts" : (l.place||"")}));   // the Schedule tab is called Shifts now
+}
+function activitySection(){
+  const admin = isAdmin();
+  const ev = activityEvents();
   let shown = ev;
   const q = admin ? S.actQuery.trim().toLowerCase() : "";
   if (admin && S.actRange!=="all"){ const cut = S.actRange==="today" ? shiftStartISO() : new Date(Date.now()-7*86400e3).toISOString(); shown = shown.filter(e=>new Date(e.at).toISOString()>=cut); }
@@ -237,7 +280,7 @@ function taskRow(t){
   if (S.editTask===t.id && S.editDraft) return h("div",{class:"task editing"}, editTaskForm(t));
   const role = roleById(t.role_id), done = isDone(t), over = isOverdue(t), due = dueLine(t), editable = canEditTask(t);
   const ck = "task:"+t.id;
-  return h("div",{class:"task"+(done?" done":"")+(over?" overdue":"")+(t.important?" important":"")+(S.fx.task===t.id ? (done?" just-done":" just-undone") : "")},
+  return h("div",{class:"task"+(done?" done":"")+(over?" overdue":"")+(t.important?" important":"")+(S.fx.task===t.id ? (done?" just-done":" just-undone") : "")+(flashing("task:"+t.id) ? " live-flash" : ""), "data-task":t.id},
     h("button",{type:"button", class:"check", "data-own-sound":"", "aria-pressed":done?"true":"false", "aria-label":(done?"Uncheck ":"Check off ")+t.text, disabled:!canWrite(), onclick:()=>toggleTask(t)}, h("span",{}, svgCheck())),
     h("div",{style:"min-width:0"},
       h("div",{class:"text"}, t.important ? h("span",{class:"star", "aria-label":"Important", title:"Important"},"★ ") : null, t.text),

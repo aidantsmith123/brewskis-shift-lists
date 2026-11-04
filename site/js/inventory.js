@@ -55,7 +55,7 @@ function openBoardSheet(){
 
 function itemRow(it){
   const st = statusOf(it), c = countOf(it.id), oh = onHandOf(it), sup = supplierById(supplierOf(it));
-  return h("div",{class:"item"+(it.on_tap?" pouring":"")},
+  return h("div",{class:"item"+(it.on_tap?" pouring":"")+(flashing("item:"+it.id) ? " live-flash" : ""), "data-item":it.id},
     h("div",{style:"min-width:0"},
       h("div",{class:"iname", text:it.name}),
       isKeg(it) ? h("div",{class:"imeta"}, tapButton(it), it.on_tap && it.tapped_at ? h("span",{text:"since "+when(it.tapped_at)}) : null) : null,
@@ -220,7 +220,7 @@ function viewInventory(){
     const toPlace = rows.filter(x=>!x.ordered && belowPar(x.s.id).length).length;
     const loose = belowPar(null).filter(it=>!supplierById(supplierOf(it)));
     const next = rows.find(x=>x.d && !x.ordered);
-    const badge = toPlace ? h("span",{class:"tag warn", text:toPlace+(toPlace===1?" order to place":" orders to place")})
+    const badge = toPlace ? h("span",{class:"tag warn"}, roll("toplace", toPlace), toPlace===1?" order to place":" orders to place")
                 : next ? h("span",{class:"tag plain", text:"Next: "+next.s.name.split(" ")[0]+" "+next.d.toLocaleDateString(undefined,{weekday:"short"})})
                 : h("span",{class:"tag ok", text:"All caught up"});
     const body = [h("p",{class:"hint", text:"Only managers see this section."})];
@@ -261,8 +261,8 @@ function viewInventory(){
     const low = all.filter(it=>(needOf(it)||0)>0).length, total = all.length;
     const pouring = all.filter(it=>it.on_tap).length;
     const badge = narrowing ? h("span",{class:"tag plain", text:items.length+(items.length===1?" match":" matches")})
-                : low ? h("span",{class:"tag warn", text:low+" below par"})
-                : pouring ? h("span",{class:"tag ok", text:pouring+" on tap"})
+                : low ? h("span",{class:"tag warn"}, roll("low:"+cat.id, low), " below par")
+                : pouring ? h("span",{class:"tag ok"}, roll("tap:"+cat.id, pouring), " on tap")
                 : h("span",{class:"tag plain", text:total+(total===1?" item":" items")});
     const ck = "cat:"+cat.id, body = [];
     if (S.invEdit && !narrowing) body.push(listSupplierPicker(cat));

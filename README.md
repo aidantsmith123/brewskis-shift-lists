@@ -76,6 +76,7 @@ Managers can turn on alerts per phone (tap your name → Notification settings):
 - **Activity history** is kept for 60 days.
 - **Supabase's free plan** pauses a project after about a week with no use. Daily use at the pub keeps it awake; if it ever pauses, press **Restore** in Supabase.
 - **Shift day** rolls over at 5 AM Eastern, so a closing shift after midnight still counts as the same day.
+- **Live updates**: after any save, the database sends every open copy of the app a "something changed" ping over Supabase Realtime (`_live_ping` in `schema.sql`, a public broadcast with no data in it). Phones reload within a second and say who did what. If the live connection is down, the app still checks every 15 seconds.
 
 ## Making changes later
 

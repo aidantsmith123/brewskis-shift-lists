@@ -103,7 +103,7 @@ async function submitPin(){
       play("ok");
       S.session = {token:r.token, staffId:r.staff_id, at:Date.now()}; storeSession(S.session);
       S.pin = ""; S.view = "overview"; S.booting = true;
-      await refresh(); window.scrollTo(0,0); return;
+      await refresh(); window.scrollTo(0,0); liveStart(); return;
     }
     S.pin = "";
     if (r && r.error==="too_many_attempts"){ S.lockUntil = Date.now()+60000; S.loginErr = "Too many wrong numbers. Wait a minute and try again."; setTimeout(()=>{ S.loginErr=""; render(); }, 60000); }

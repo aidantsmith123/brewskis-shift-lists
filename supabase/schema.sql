@@ -2183,6 +2183,35 @@ begin
   delete from daily_cash where day = p_day;
 end $$;
 
+-- ---------- live updates (v49) ----------
+-- After any change people would see, tell every open copy of the app "something changed" over Supabase Realtime,
+-- so it reloads within a second instead of waiting for the next 15-second check. The message carries no data:
+-- each phone still reads what it's allowed to see through api_state. One message per database transaction.
+create or replace function _live_ping() returns trigger language plpgsql
+set search_path = public, extensions as $$
+begin
+  if tg_table_name = 'log' and tg_op = 'DELETE' then return null; end if;   -- trimming old activity isn't news
+  if current_setting('brewskis.live_pinged', true) = 'y' then return null; end if;
+  perform set_config('brewskis.live_pinged', 'y', true);
+  begin
+    perform realtime.send(jsonb_build_object('t', extract(epoch from clock_timestamp())), 'changed', 'brewskis-live', false);
+  exception when others then null;   -- live updates are a nicety: never let them block a save
+  end;
+  return null;
+end $$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['roles','staff','logins','tasks','invcats','suppliers','items','counts','log','shifts','shift_swaps',
+                           'events','parties','app_settings','drawers','cashouts','manager_alerts','daily_cash'] loop
+    if to_regclass('public.' || t) is not null then
+      execute format('drop trigger if exists live_ping on %I', t);
+      execute format('create trigger live_ping after insert or update or delete on %I for each row execute function _live_ping()', t);
+    end if;
+  end loop;
+end $$;
+
 -- ---------- who may call what ----------
 do $$
 declare f record; app boolean;

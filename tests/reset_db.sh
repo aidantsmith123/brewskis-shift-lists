@@ -8,4 +8,5 @@ $P -c "select pg_terminate_backend(pid) from pg_stat_activity where datname='bk'
 $P -d bk -f "$HERE/fixtures/schema_v1.sql" 2>&1 | grep -v NOTICE || true
 $P -d bk -f "$HERE/fixtures/seed.sql"
 $P -d bk -Atc "select admin_set_pin('Aidan','4821'); select admin_set_pin('Jill','1111');" >/dev/null
+$P -d bk -f "$HERE/fixtures/realtime_stub.sql" >/dev/null
 $P -d bk -f "$REPO/supabase/schema.sql" 2>&1 | grep -v NOTICE || true

@@ -1,5 +1,5 @@
 {
-  "version": 48,
+  "version": 49,
   "date": "2026-11-03",
-  "notes": "Updates now install themselves when you open the app or leave it idle. New: text someone their login number with the app link, and a sign-up poster with a QR code. Behind-the-scenes cleanup."
+  "notes": "The app feels alive: changes from other phones show up within a second, with a note saying who did what. Numbers roll when they change, pulling down to refresh pours a pint, and the greeting changes with the day and what's on tonight."
 }
