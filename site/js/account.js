@@ -10,7 +10,7 @@ async function toggleTask(t){
                          done_by:me().id, done_by_name:me().name, done_at:new Date().toISOString()});
   S.fx.task = t.id;
   if (!isDone(t)) play("undo");
-  else { const rp = progressOf(visibleTasks().filter(countsToday)); play(rp.total && rp.done===rp.total ? "cheers" : "clink"); }
+  else { const rp = progressOf(visibleTasks().filter(notSomeoneElses).filter(countsToday)); play(rp.total && rp.done===rp.total ? "cheers" : "clink"); }
   render();
   if (!(await act("api_toggle_task", {p_id:t.id}))){ Object.assign(t, before); render(); }
 }

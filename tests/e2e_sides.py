@@ -13,6 +13,9 @@ def login(b, pin):
     pg=b.new_context(viewport={"width":390,"height":844}).new_page(); pg.goto(URL); pg.locator("#intro").click()
     for x in pin: pg.get_by_role("button", name=x, exact=True).click()
     pg.get_by_role("button", name="Log in").click(); pg.wait_for_timeout(1300); return pg
+def done_line(pg):   # "x of y done", read the way a screen reader would (rolling digits count once)
+    pg.wait_for_timeout(1100)
+    return pg.evaluate("()=>{ const c=document.querySelector('.tn-sum').cloneNode(true); c.querySelectorAll('.rd').forEach(x=>x.remove()); return c.textContent.trim(); }")
 def tasks(pg): return sorted(t.split("\n")[0] for t in pg.locator(".task").all_inner_texts())
 with sync_playwright() as p:
     b=p.chromium.launch(); errs=[]
@@ -24,7 +27,18 @@ with sync_playwright() as p:
     assert tasks(l)==["Fill and test the sanitizer","Restock the merch shelf"], tasks(l)
     l.get_by_role("button", name="Check off Fill and test the sanitizer").click(); l.wait_for_timeout(900)
     n=login(b,"1357"); print("Newbie:", tasks(n)); assert tasks(n)==["Restock the merch shelf"], tasks(n)
-    a=login(b,"4821"); print("Aidan:", tasks(a)); assert len(tasks(a))==4 and a.get_by_role("button", name="Done · 1").count()==1, tasks(a)   # managers see everything
+    a=login(b,"4821"); print("Aidan:", tasks(a))
+    # managers see everything, but a task assigned to someone else isn't on their own to-do list: it's folded away
+    assert tasks(a)==["Do the payroll","Restock the merch shelf","Wipe down the taps"] and a.get_by_role("button", name="Done · 1").count()==1, tasks(a)
+    fold=a.get_by_role("button", name="Assigned to others · 1  ▸"); expect(fold).to_be_visible(); fold.click()
+    expect(a.locator(".task", has_text="Audit the liquor prices")).to_contain_text("For Kate")
+    a.screenshot(path=sys.argv[1]+"/sides-others.png", full_page=True)
+    a.reload(); a.wait_for_timeout(1300)   # stays open on this phone until folded again
+    expect(a.locator(".task", has_text="Audit the liquor prices")).to_be_visible()
+    a.get_by_role("button", name="Assigned to others · 1  ▾").click(); expect(a.locator(".task", has_text="Audit the liquor prices")).to_have_count(0)
+    # ...and Kate's assigned task isn't in Aidan's own count: 4 of his, 1 done (Liam's sanitizer)
+    print("Aidan's count:", done_line(a)); assert done_line(a)=="1 of 4 done", done_line(a)
+    print("Kate's count:", done_line(k)); assert done_line(k)=="0 of 3 done", done_line(k)
     expect(a.locator(".feed")).to_contain_text("Fill and test the sanitizer")                 # managers see BOH activity
     j.reload(); j.wait_for_timeout(1300)
     assert "Fill and test the sanitizer" not in (j.locator(".feed").inner_text() if j.locator(".feed").count() else "")   # Jill doesn't

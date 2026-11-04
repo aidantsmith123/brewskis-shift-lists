@@ -16,6 +16,8 @@ const canSeeRole = r => !!r && visibleSections().has(r.section);
 /* tasks this person sees: ones for everyone, plus ones for roles on their side of the pub */
 /* a task assigned to one person shows only for them (and managers); the rest go by role */
 const visibleTasks = () => D().tasks.filter(t=>t.assignee ? (t.assignee===me().id || isAdmin()) : (!t.role_id || canSeeRole(roleById(t.role_id))));
+/* the "x of y done" count is personal: managers see tasks assigned to other people, but those aren't theirs to finish */
+const notSomeoneElses = t => !t.assignee || t.assignee===me().id;
 const isMineTask = t => { const m = me(); return t.assignee ? t.assignee===m.id : (!t.role_id || (m.roles||[]).includes(t.role_id)); };
 const taskSort = (a,b)=>Number(!!b.important)-Number(!!a.important) || (taskDeadline(a)||Infinity)-(taskDeadline(b)||Infinity) || a.text.localeCompare(b.text);
 
@@ -75,7 +77,8 @@ function vibeLine(day, now){
 const ALL_DONE = ["All done for today 🍻", "Every box checked. Cheers 🍻", "Clean sweep today 🍻", "That’s everything. Nice work 🍻"];
 function tonightCard(all){
   const m = me(), now = new Date(), today = shiftDay();
-  const p = progressOf(all.filter(countsToday)), over = all.filter(isOverdue).length;
+  const mine = all.filter(notSomeoneElses);
+  const p = progressOf(mine.filter(countsToday)), over = mine.filter(isOverdue).length;
   const rows = [], wd = iso => new Date(iso).toLocaleDateString([], {weekday:"short"});
   /* your shift */
   const next = myShifts().filter(s=>shiftEndDate(s) > now).sort((a,b)=>a.start_at.localeCompare(b.start_at))[0];
@@ -142,13 +145,17 @@ function viewOverview(){
     out.push(activitySection());
     return out;
   }
-  const starred = all.filter(t=>t.important && !isDone(t)).length;
+  const starred = all.filter(t=>t.important && !isDone(t) && notSomeoneElses(t)).length;
   out.push(h("div",{class:"chips", role:"group", "aria-label":"Show"},
     [["all","All tasks"],["mine","For me"],["important",["★ Important", starred ? [" · ", roll("starred", starred)] : null]]].map(([id,label])=>
       h("button",{type:"button", class:"chip", "aria-pressed":String(S.taskFilter===id), onclick:()=>{ S.taskFilter = id; render(); }}, label))));
   let list = all;
   if (S.taskFilter==="mine") list = list.filter(isMineTask);
   if (S.taskFilter==="important") list = list.filter(t=>t.important);
+  /* managers: open tasks assigned to someone else aren't on their own to-do list. They sit in their own folded group. */
+  const others = list.filter(t=>!notSomeoneElses(t) && bucket(t)!=="done").sort((a,b)=>staffName(a.assignee).localeCompare(staffName(b.assignee)) || taskSort(a,b));
+  list = list.filter(t=>notSomeoneElses(t) || bucket(t)==="done");
+  const showOthers = isOpen("others", false);
   const over = list.filter(isOverdue).sort(taskSort);
   const today = list.filter(t=>bucket(t)==="now" && !isOverdue(t)).sort(taskSort);
   const later = list.filter(t=>bucket(t)==="later").sort(taskSort);
@@ -158,11 +165,14 @@ function viewOverview(){
     group("Overdue", over, "over"),
     group("To do", today),
     group("Coming up", later),
+    !over.length && !today.length && !later.length
+      ? h("div",{class:"task"}, h("span"), h("span",{class:"hint", text: S.taskFilter==="important" ? "No starred tasks open." : S.taskFilter==="mine" ? "Nothing open for you." : "All caught up."})) : null,
     done.length ? h("button",{type:"button", class:"divider fold", "aria-expanded":String(S.showDone), onclick:()=>{ S.showDone = !S.showDone; render(); }},
       "Done · "+done.length+(S.showDone ? "  ▾" : "  ▸")) : null,
     S.showDone ? done.slice(0, 30).map(taskRow) : null,
-    !over.length && !today.length && !later.length && !(done.length && S.showDone)
-      ? h("div",{class:"task"}, h("span"), h("span",{class:"hint", text: S.taskFilter==="important" ? "No starred tasks open." : S.taskFilter==="mine" ? "Nothing open for you." : "All caught up."})) : null));
+    others.length ? h("button",{type:"button", class:"divider fold", "aria-expanded":String(showOthers), onclick:()=>toggleOpen("others", false)},
+      "Assigned to others · "+others.length+(showOthers ? "  ▾" : "  ▸")) : null,
+    showOthers ? others.map(taskRow) : null));
   out.push(activitySection());
   return out;
 }

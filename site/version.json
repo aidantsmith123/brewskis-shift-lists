@@ -1,5 +1,5 @@
 {
-  "version": 49,
+  "version": 50,
   "date": "2026-11-03",
-  "notes": "The app feels alive: changes from other phones show up within a second, with a note saying who did what. Numbers roll when they change, pulling down to refresh pours a pint, and the greeting changes with the day and what's on tonight."
+  "notes": "Tasks assigned to someone else are off your to-do list and out of your \"x of y done\" count. Managers can still see them in a folded \"Assigned to others\" group at the bottom of the list."
 }
