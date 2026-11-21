@@ -1,5 +1,5 @@
 {
-  "version": 51,
-  "date": "2026-11-03",
-  "notes": "New notification for managers: when someone checks off a task you added, you're told what got done and who did it. Turn it on or off under Notifications, \"Your tasks get done\"."
+  "version": 52,
+  "date": "2026-11-21",
+  "notes": "Daily cash now shows the 3 most recent earlier days. Tap \"Show more\" for the rest."
 }

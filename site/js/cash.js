@@ -16,6 +16,8 @@ function dailyCashBoardRow(today){
   if (dcFor(y)) return null;
   return boardRow("tn-dcash", "Daily cash", "Enter "+weekdayName(y, "short")+"’s numbers", ()=>{ go("cash"); openDailyCashForm(y); });
 }
+const DC_SHOWN = 3;
+let dcShowAll = false;
 function dcStats(d){
   return h("div",{class:"cashstats"},
     h("div",{class:"cstat"}, h("small",{text:"Cash sales"}), h("b",{}, roll("dc-sales", cash(d.cash_sales)))),
@@ -34,11 +36,15 @@ function dailyCashCard(){
     dcStats(latest),
     (latest.payouts||[]).length ? h("ul",{class:"dcpays"}, latest.payouts.map(p=>h("li",{}, h("span",{text:p.who}), h("b",{text:cash(p.amount)})))) : null,
     latest.note ? h("p",{class:"hint", style:"margin:0", text:"“"+latest.note+"”"}) : null));
-  const rest = list.slice(1, 15);
+  /* earlier days: the 3 most recent show; the rest wait behind "Show more" (folded again next time the app opens) */
+  const rest = list.slice(1, 15), more = rest.length - DC_SHOWN, showAll = dcShowAll && more > 0;
   if (rest.length) sec.append(h("div",{class:"stack", style:"gap:6px"}, h("b",{class:"subhead", text:"Earlier days"}),
-    rest.map(d=>h("button",{type:"button", class:"cashrow", onclick:()=>openDailyCashForm(d.day)},
+    (showAll ? rest : rest.slice(0, DC_SHOWN)).map(d=>h("button",{type:"button", class:"cashrow", onclick:()=>openDailyCashForm(d.day)},
       h("span",{class:"t"}, h("b",{text:shortDay(d.day)}),
-        h("span",{class:"hint", text:"Sales "+cash(d.cash_sales)+" · Payouts "+cash(d.payouts_total)+" · COH "+signed(d.left_over)}))))));
+        h("span",{class:"hint", text:"Sales "+cash(d.cash_sales)+" · Payouts "+cash(d.payouts_total)+" · COH "+signed(d.left_over)})))),
+    more > 0 ? h("button",{type:"button", class:"btn ghost small dcmore", style:"align-self:flex-start", "aria-expanded":String(showAll),
+        onclick:()=>{ dcShowAll = !showAll; render(); }},
+      showAll ? "Show fewer" : "Show "+more+" more "+(more===1 ? "day" : "days")) : null));
   sec.append(h("button",{type:"button", class:"btn ghost small", style:"align-self:flex-start", onclick:downloadDailyCash},"Download CSV"));
   return sec;
 }
